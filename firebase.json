@@ -1,0 +1,13 @@
+{
+  "functions": { "source": "functions" },
+  "firestore": { "rules": "firestore.rules" },
+  "storage": { "rules": "storage.rules" },
+  "hosting": {
+    "public": ".",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "functions/**", "firestore.rules", "storage.rules", "README.md"],
+    "rewrites": [
+      { "source": "/api/**", "function": { "functionId": "api", "region": "europe-west1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  }
+}

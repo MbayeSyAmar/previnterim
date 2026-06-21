@@ -1,0 +1,6 @@
+functions/node_modules/
+scraper/serviceAccount.json
+functions/.secret.local
+firebase-debug.log
+firebase-debug.*.log
+.firebase/

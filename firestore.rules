@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function userData() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return signedIn() && userData().role == 'admin'; }
+    function isCandidate() { return signedIn() && userData().role == 'candidate'; }
+    function isCompany() { return signedIn() && userData().role == 'company'; }
+
+    match /users/{uid} {
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role in ['candidate', 'company'];
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow update: if isAdmin() || (signedIn() && request.auth.uid == uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status);
+      allow delete: if isAdmin();
+    }
+
+    match /candidateProfiles/{uid} {
+      allow create, read, update: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow delete: if isAdmin();
+    }
+
+    match /companies/{uid} {
+      allow create, read, update: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow delete: if isAdmin();
+    }
+
+    match /missions/{missionId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.status == 'published')
+        || (isCompany() && resource.data.companyId == request.auth.uid);
+      allow create: if isAdmin() || (isCompany()
+        && userData().status == 'active'
+        && request.resource.data.companyId == request.auth.uid
+        && request.resource.data.status == 'pending');
+      allow update: if isAdmin() || (isCompany()
+        && resource.data.companyId == request.auth.uid
+        && request.resource.data.companyId == request.auth.uid
+        && request.resource.data.status == resource.data.status);
+      allow delete: if isAdmin() || (isCompany()
+        && resource.data.companyId == request.auth.uid);
+    }
+
+    match /applications/{applicationId} {
+      allow create: if isCandidate()
+        && request.resource.data.candidateId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow read: if isAdmin() || (isCandidate() && resource.data.candidateId == request.auth.uid);
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (isCandidate()
+        && resource.data.candidateId == request.auth.uid
+        && resource.data.status == 'pending');
+    }
+
+    match /proposals/{proposalId} {
+      allow create, delete: if isAdmin();
+      allow read: if isAdmin()
+        || (isCompany() && resource.data.companyId == request.auth.uid)
+        || (isCandidate() && resource.data.candidateId == request.auth.uid);
+      allow update: if isAdmin() || (isCompany()
+        && resource.data.companyId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['response', 'updatedAt']));
+    }
+
+    match /interviews/{interviewId} {
+      allow create, update, delete: if isAdmin();
+      allow read: if isAdmin() || (isCandidate() && resource.data.candidateId == request.auth.uid);
+    }
+
+    match /candidateDocuments/{documentId} {
+      allow read: if isAdmin() || (isCandidate() && resource.data.candidateId == request.auth.uid);
+      allow create: if isAdmin() || (signedIn() && request.auth.uid == request.resource.data.candidateId && request.resource.data.uploadedBy == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
+    // OAuth tokens and temporary states are server-only. No client rule is provided.
+  }
+}
