@@ -14,10 +14,12 @@ import {
   getDoc,
   getDocs,
   getFirestore,
+  limit,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
+  startAfter,
   updateDoc,
   where
 } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js';
@@ -42,6 +44,12 @@ const CLOUDINARY_CLOUD_NAME = 'dqe7z0kdx';
 // or use the curl command shown after applying these changes.
 const CLOUDINARY_UPLOAD_PRESET = 'unsigned_previnterim';
 const apiBaseUrl = 'https://europe-west1-gerart-6cdc1.cloudfunctions.net/api';
+// Notifications email via EmailJS (gratuit, 100% côté client, aucune Cloud Function requise).
+// Créez un compte sur emailjs.com, un service, un template avec les variables
+// to_email / to_name / subject / message, puis renseignez les 3 valeurs ci-dessous.
+const EMAILJS_SERVICE_ID = 'service_kwc6nqj';
+const EMAILJS_TEMPLATE_ID = 'template_hg6328t';
+const EMAILJS_PUBLIC_KEY = 'xcYCxu3DUtslaUtp1';
 
 const rows = (snapshot) => snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
 
@@ -194,9 +202,36 @@ async function getSessionProfile(user) {
   return { uid: user.uid, email: user.email, ...snapshot.data() };
 }
 
+async function notifyByEmail(uid, subject, message) {
+  if (!uid || uid.startsWith('scraped_') || EMAILJS_PUBLIC_KEY.startsWith('YOUR_')) return;
+  try {
+    const userDoc = await getDoc(doc(db, 'users', uid));
+    if (!userDoc.exists() || !userDoc.data().email) return;
+    const { email, displayName } = userDoc.data();
+    await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id: EMAILJS_SERVICE_ID,
+        template_id: EMAILJS_TEMPLATE_ID,
+        user_id: EMAILJS_PUBLIC_KEY,
+        template_params: { to_email: email, to_name: displayName || '', subject, message }
+      })
+    });
+  } catch {
+    // Notification best-effort : un échec d'envoi ne doit jamais bloquer l'action principale.
+  }
+}
+
+const PAGE_SIZE = 40;
+const pageInfo = (snapshot) => ({
+  cursor: snapshot.docs[snapshot.docs.length - 1] || null,
+  hasMore: snapshot.docs.length === PAGE_SIZE
+});
+
 async function loadWorkspace(session) {
-  const result = { missions: [], applications: [], profiles: [], companies: [], proposals: [], interviews: [] };
-  const published = query(collection(db, 'missions'), where('status', '==', 'published'));
+  const result = { missions: [], applications: [], profiles: [], companies: [], proposals: [], interviews: [], pagination: {} };
+  const published = query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
 
   if (session.role === 'candidate') {
     const [missions, applications, profile, interviews] = await Promise.all([
@@ -209,6 +244,7 @@ async function loadWorkspace(session) {
     result.applications = rows(applications);
     result.profile = profile.exists() ? profile.data() : {};
     result.interviews = rows(interviews);
+    result.pagination.missions = pageInfo(missions);
   } else if (session.role === 'company') {
     const [missions, proposals, company] = await Promise.all([
       getDocs(query(collection(db, 'missions'), where('companyId', '==', session.uid))),
@@ -220,19 +256,44 @@ async function loadWorkspace(session) {
     result.company = company.exists() ? company.data() : {};
   } else if (session.role === 'admin') {
     const [missions, applications, profiles, companies, proposals, interviews] = await Promise.all([
-      getDocs(collection(db, 'missions')),
-      getDocs(collection(db, 'applications')),
-      getDocs(collection(db, 'candidateProfiles')),
-      getDocs(collection(db, 'companies')),
-      getDocs(collection(db, 'proposals')),
-      getDocs(collection(db, 'interviews'))
+      getDocs(query(collection(db, 'missions'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE))),
+      getDocs(query(collection(db, 'applications'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE))),
+      getDocs(query(collection(db, 'candidateProfiles'), orderBy('updatedAt', 'desc'), limit(PAGE_SIZE))),
+      getDocs(query(collection(db, 'companies'), orderBy('updatedAt', 'desc'), limit(PAGE_SIZE))),
+      getDocs(query(collection(db, 'proposals'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE))),
+      getDocs(query(collection(db, 'interviews'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE)))
     ]);
     Object.assign(result, {
       missions: rows(missions), applications: rows(applications), profiles: rows(profiles),
       companies: rows(companies), proposals: rows(proposals), interviews: rows(interviews)
     });
+    result.pagination = {
+      missions: pageInfo(missions), applications: pageInfo(applications), profiles: pageInfo(profiles),
+      companies: pageInfo(companies), proposals: pageInfo(proposals), interviews: pageInfo(interviews)
+    };
   }
   return result;
+}
+
+const MORE_PAGE_QUERIES = {
+  candidate: {
+    missions: (cursor) => query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE))
+  },
+  admin: {
+    missions: (cursor) => query(collection(db, 'missions'), orderBy('createdAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE)),
+    applications: (cursor) => query(collection(db, 'applications'), orderBy('createdAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE)),
+    profiles: (cursor) => query(collection(db, 'candidateProfiles'), orderBy('updatedAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE)),
+    companies: (cursor) => query(collection(db, 'companies'), orderBy('updatedAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE)),
+    proposals: (cursor) => query(collection(db, 'proposals'), orderBy('createdAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE)),
+    interviews: (cursor) => query(collection(db, 'interviews'), orderBy('createdAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE))
+  }
+};
+
+async function loadMorePage(session, kind, cursor) {
+  const builder = MORE_PAGE_QUERIES[session.role]?.[kind];
+  if (!builder) throw new Error('Pagination non disponible pour cette liste.');
+  const snapshot = await getDocs(builder(cursor));
+  return { rows: rows(snapshot), ...pageInfo(snapshot) };
 }
 
 function createMission(session, values) {
@@ -316,8 +377,8 @@ async function getDocumentsForCandidate(candidateId) {
 
 export {
   applyToMission, auth, createInterview, createMission, createProposal, db, firebaseApp,
-  connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, loadWorkspace,
-  login, logout, onAuthStateChanged, register, resetPassword, respondToProposal,
+  connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, loadMorePage, loadWorkspace,
+  login, logout, notifyByEmail, onAuthStateChanged, register, resetPassword, respondToProposal,
   saveCandidateProfile, saveCompanyProfile, storage, triggerScrape, updateApplication,
   updateCompanyStatus, updateMissionStatus, uploadDriveDocument, uploadStorageDocument,
   uploadCloudinaryDocument

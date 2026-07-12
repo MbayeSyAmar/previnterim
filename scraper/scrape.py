@@ -59,7 +59,61 @@ SOURCES = [
         "urls": ["https://www.expat.com/en/jobs/africa/senegal/"],
         "city": "Dakar",
     },
+    {
+        "id": "senjob",
+        "name": "Senjob",
+        "urls": ["https://senjob.com/sn/offres-d-emploi.php"],
+        "city": "Sénégal",
+    },
+    {
+        "id": "offreemploisn",
+        "name": "Offre-Emploi.sn",
+        "urls": ["https://offre-emploi.sn/"],
+        "city": "Dakar",
+    },
+    {
+        "id": "wiijob",
+        "name": "Wiijob",
+        "urls": ["https://wiijob.com/offres-emploi-localisation/senegal/"],
+        "city": "Sénégal",
+    },
+    # Sites WP Job Manager : les offres sont chargées en JS, on interroge
+    # directement leur endpoint AJAX plutôt que la page statique (vide).
+    {
+        "id": "emploidakar",
+        "name": "Emploi Dakar",
+        "urls": ["https://www.emploidakar.com/offres-demploi-au-senegal/"],
+        "wp_ajax": "https://www.emploidakar.com/wp-admin/admin-ajax.php",
+        "city": "Dakar",
+    },
+    {
+        "id": "humanis",
+        "name": "Humanis Intérim",
+        "urls": ["https://humanis-sn.com/offres-demplois/"],
+        "wp_ajax": "https://humanis-sn.com/wp-admin/admin-ajax.php",
+        "city": "Dakar",
+    },
+    {
+        "id": "umointerim",
+        "name": "UMO Intérim",
+        "urls": ["https://www.umo-interim.com/offres/"],
+        "wp_ajax": "https://www.umo-interim.com/wp-admin/admin-ajax.php",
+        "city": "Dakar",
+        # Ce cabinet publie pour plusieurs pays d'Afrique de l'Ouest sur la même page.
+        "senegal_only": True,
+    },
 ]
+
+NON_SENEGAL_HINTS = [
+    "bénin", "benin", "côte d'ivoire", "cote d'ivoire", "burkina", "mali",
+    "niger", "togo", "guinée", "guinee", "cameroun", "gabon", "congo",
+    "tchad", "maroc", "algérie", "algerie", "tunisie", "nigeria", "ghana",
+]
+
+
+def is_senegal_job(job: dict) -> bool:
+    text = f"{job.get('city', '')} {job.get('title', '')}".lower()
+    return not any(hint in text for hint in NON_SENEGAL_HINTS)
 
 SECTORS = {
     "BTP / Construction":        ["btp", "construct", "bâtiment", "génie civil", "travaux"],
@@ -95,6 +149,28 @@ def fetch_html(urls: list[str], timeout: int = 20) -> tuple[str | None, str | No
             short = str(e)[:80]
             print(f"  KO  {url}  →  {short}")
     return None, None
+
+
+def fetch_wp_ajax_jobs(endpoint: str, timeout: int = 20) -> str | None:
+    """Interroge l'endpoint AJAX du plugin WordPress "WP Job Manager".
+    Ces sites affichent leurs offres via JS après chargement ; la page HTML
+    statique est vide, mais l'endpoint admin-ajax.php renvoie le HTML rendu.
+    """
+    payload = {
+        "action": "job_manager_get_listings",
+        "search_keywords": "", "search_location": "",
+        "per_page": "20", "orderby": "featured", "order": "DESC", "page": "1",
+    }
+    try:
+        r = requests.post(endpoint, data=payload, headers=HEADERS, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+        html = data.get("html") if data.get("found_jobs") else None
+        print(f"  OK  {endpoint}  (AJAX, {len(html) if html else 0} chars)")
+        return html
+    except Exception as e:
+        print(f"  KO  {endpoint}  →  {str(e)[:80]}")
+        return None
 
 
 def extract_from_json_scripts(soup: BeautifulSoup) -> list[dict]:
@@ -264,11 +340,20 @@ def ensure_company(db, source: dict, source_url: str):
 
 def scrape_source(db, source: dict) -> int:
     print(f"\n[{source['name']}]")
-    html, used_url = fetch_html(source["urls"])
+    if source.get("wp_ajax"):
+        html = fetch_wp_ajax_jobs(source["wp_ajax"])
+        used_url = source["urls"][0] if source.get("urls") else source["wp_ajax"]
+    else:
+        html, used_url = fetch_html(source["urls"])
     if not html:
         return 0
 
     jobs = parse_jobs(html, source, used_url)
+    if source.get("senegal_only"):
+        before = len(jobs)
+        jobs = [j for j in jobs if is_senegal_job(j)]
+        if len(jobs) < before:
+            print(f"  {before - len(jobs)} offres hors Sénégal écartées")
     if not jobs:
         print("  Aucune offre trouvée.")
         return 0

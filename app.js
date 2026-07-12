@@ -1,7 +1,7 @@
 ﻿import {
   applyToMission, auth, createInterview, createMission, createProposal,
-  getDocumentsForCandidate, getSessionProfile, loadWorkspace, login, logout,
-  onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile,
+  getDocumentsForCandidate, getSessionProfile, loadMorePage, loadWorkspace, login, logout,
+  notifyByEmail, onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile,
   saveCompanyProfile, updateApplication, updateCompanyStatus, updateMissionStatus,
   uploadStorageDocument, uploadCloudinaryDocument
 } from './firebase.js';
@@ -38,8 +38,67 @@ const DOC_TYPES = { cv: 'CV', identity: "Pièce d'identité", certificate: 'Cert
 const state = {
   session: null,
   workspace: { missions: [], applications: [], profiles: [], companies: [], proposals: [], interviews: [] },
-  page: 'dashboard', query: '', filter: 'all', sectorFilter: 'all', authMode: 'login', loading: true, driveConnected: null
+  page: 'dashboard', query: '', filter: 'all', sectorFilter: 'all', authMode: 'login', loading: true, driveConnected: null,
+  legalPage: null
 };
+
+const LEGAL_CONTENT = {
+  mentions: {
+    title: 'Mentions légales',
+    body: `
+      <h2>Éditeur du site</h2>
+      <p>Le site Interim est édité par <strong>[Raison sociale / nom de l'auto-entrepreneur à compléter]</strong>, immatriculé sous le numéro NINEA/RCCM <strong>[à compléter]</strong>, dont le siège est situé <strong>[adresse à compléter, Sénégal]</strong>. Contact : <strong>[email de contact à compléter]</strong>.</p>
+      <h2>Directeur de la publication</h2>
+      <p><strong>[Nom du responsable à compléter]</strong>.</p>
+      <h2>Hébergement</h2>
+      <p>Le site est hébergé par Google Ireland Limited (Firebase Hosting), Gordon House, Barrow Street, Dublin 4, Irlande. Les documents candidats sont hébergés par Cloudinary Ltd.</p>
+      <h2>Propriété intellectuelle</h2>
+      <p>L'ensemble des contenus du site (textes, structure, identité visuelle) est protégé. Les offres de mission importées automatiquement depuis des sites tiers restent la propriété de leurs éditeurs respectifs et sont reproduites à titre informatif, avec un lien vers la source d'origine.</p>`
+  },
+  privacy: {
+    title: 'Politique de confidentialité',
+    body: `
+      <h2>Responsable du traitement</h2>
+      <p><strong>[Raison sociale à compléter]</strong> est responsable du traitement des données personnelles collectées sur cette plateforme.</p>
+      <h2>Données collectées</h2>
+      <p>Selon votre profil : identité et coordonnées (nom, téléphone, ville, email), informations professionnelles (compétences, expérience, disponibilité), documents (CV, pièce d'identité, certificats), informations sur l'entreprise (raison sociale, SIRET, contact).</p>
+      <h2>Finalités</h2>
+      <p>Mise en relation entre candidats et entreprises, qualification des candidatures par l'équipe Interim, gestion des comptes, envoi de notifications relatives au suivi de vos candidatures, missions ou entretiens.</p>
+      <h2>Destinataires et sous-traitants</h2>
+      <p>Vos données sont hébergées par Firebase/Google (authentification et base de données), vos documents par Cloudinary, et les notifications email sont envoyées via EmailJS. Aucune donnée n'est vendue à des tiers. Votre identité complète n'est jamais communiquée à une entreprise sans votre candidature explicite ; seules des informations anonymisées sont partagées lors de la présentation d'un profil.</p>
+      <h2>Durée de conservation</h2>
+      <p>Vos données sont conservées le temps de votre inscription sur la plateforme, puis archivées ou supprimées conformément à la réglementation applicable après clôture du compte.</p>
+      <h2>Vos droits</h2>
+      <p>Vous disposez d'un droit d'accès, de rectification, de suppression et d'opposition sur vos données personnelles. Pour l'exercer, contactez <strong>[email de contact à compléter]</strong>.</p>
+      <h2>Cookies et stockage local</h2>
+      <p>Le site utilise uniquement le stockage nécessaire à l'authentification (session Firebase Auth). Aucun cookie publicitaire ou de traçage tiers n'est utilisé.</p>`
+  },
+  terms: {
+    title: 'Conditions générales d\'utilisation',
+    body: `
+      <h2>Objet</h2>
+      <p>Les présentes CGU régissent l'accès et l'utilisation de la plateforme Interim, service de mise en relation entre candidats, entreprises et missions d'intérim au Sénégal.</p>
+      <h2>Accès au service et comptes</h2>
+      <p>L'accès nécessite la création d'un compte candidat ou entreprise. Les comptes entreprise sont soumis à validation par un administrateur avant de pouvoir publier des missions. Les comptes administrateur ne sont pas ouverts à l'auto-inscription.</p>
+      <h2>Rôle d'intermédiaire</h2>
+      <p>L'équipe Interim qualifie les candidatures et présente les profils pertinents aux entreprises de manière anonymisée. La plateforme ne garantit ni l'obtention d'une mission par un candidat, ni le recrutement d'un profil par une entreprise.</p>
+      <h2>Missions importées automatiquement</h2>
+      <p>Certaines missions affichées (marquées "Importée") proviennent de sites d'emploi tiers, collectées automatiquement à titre informatif. Interim n'est pas partie à ces offres ; les candidats sont invités à vérifier les informations directement auprès de la source indiquée.</p>
+      <h2>Obligations de l'utilisateur</h2>
+      <p>Chaque utilisateur s'engage à fournir des informations exactes et à jour, à ne pas usurper l'identité d'un tiers et à ne pas détourner le service à des fins autres que le recrutement.</p>
+      <h2>Responsabilité</h2>
+      <p>Interim met en œuvre les moyens raisonnables pour assurer la disponibilité et la sécurité du service, sans garantie de résultat. La responsabilité d'Interim ne saurait être engagée en cas d'information erronée fournie par un utilisateur ou une source tierce.</p>
+      <h2>Résiliation</h2>
+      <p>Tout utilisateur peut demander la suppression de son compte à tout moment. Interim se réserve le droit de suspendre un compte en cas de non-respect des présentes CGU.</p>
+      <h2>Droit applicable</h2>
+      <p>Les présentes CGU sont soumises au droit sénégalais. Pour toute question, contactez <strong>[email de contact à compléter]</strong>.</p>`
+  }
+};
+
+function legalPageView() {
+  const entry = LEGAL_CONTENT[state.legalPage] || LEGAL_CONTENT.mentions;
+  return `<main class="auth-shell"><section class="auth-panel" style="width:100%;max-width:760px;margin:0 auto"><div class="auth-card" style="max-width:none"><button class="link" data-legal-back>← Retour</button><h1 style="margin-top:14px">${esc(entry.title)}</h1><div class="legal-body">${entry.body}</div></div></section></main>`;
+}
 
 const nav = {
   admin: [
@@ -97,6 +156,11 @@ function errorMessage(error) {
   return messages[error.code] || error.message || 'Une erreur est survenue.';
 }
 
+function loadMoreButton(kind, label = 'Charger plus') {
+  if (!state.workspace.pagination?.[kind]?.hasMore) return '';
+  return `<div class="load-more"><button class="btn btn-light btn-small" data-load-more="${kind}">${label}</button></div>`;
+}
+
 function loadingScreen() {
   return `<div class="loading-screen"><div class="brand"><span class="brand-mark">I</span> Interim.</div><div class="spinner"></div><p>Connexion sécurisée...</p></div>`;
 }
@@ -114,6 +178,7 @@ function authScreen() {
       </form>
       ${!reg ? '<button class="link auth-link" id="reset-password">Mot de passe oublié ?</button>' : ''}
       <div class="auth-switch">${reg ? 'Déjà inscrit ?' : 'Pas encore de compte ?'} <button class="link" id="auth-toggle">${reg ? 'Se connecter' : 'Créer un compte'}</button></div>
+      <div class="legal-footer"><button class="link" data-legal="mentions">Mentions légales</button><button class="link" data-legal="privacy">Confidentialité</button><button class="link" data-legal="terms">CGU</button></div>
     </div></section>
   </main>`;
 }
@@ -133,7 +198,7 @@ function shell(content) {
   const navHtml = items.map(([id, icon, text]) => `<button data-page="${id}" class="${state.page === id ? 'active' : ''}">${icons[icon]}<span>${text}</span></button>`).join('');
   const label = s.role === 'admin' ? 'Administration' : s.role === 'candidate' ? 'Espace candidat' : 'Espace entreprise';
   const pendingNotice = s.role === 'company' && s.status === 'pending' ? '<div class="notice">Votre entreprise attend la validation. Vous pouvez compléter le profil et preparer une mission.</div>' : '';
-  return `<div class="shell"><header class="topbar"><a class="brand" data-page="dashboard"><span class="brand-mark">I</span> Interim<span style="color:var(--green)">.</span></a><div class="top-actions"><button class="icon-btn" data-toast="Vos notifications apparaîtront ici">${icons.bell}</button><div class="avatar" title="${esc(s.displayName)}">${initials(s.displayName)}</div></div></header><div class="layout"><aside class="sidebar"><div class="nav-label">${label}</div><nav class="nav">${navHtml}</nav><button class="logout-btn" id="logout">${icons.logout}<span>Se déconnecter</span></button></aside><main class="main">${pendingNotice}${content}</main></div><nav class="mobile-nav">${navHtml}</nav></div>`;
+  return `<div class="shell"><header class="topbar"><a class="brand" data-page="dashboard"><span class="brand-mark">I</span> Interim<span style="color:var(--green)">.</span></a><div class="top-actions"><button class="icon-btn" data-toast="Vos notifications apparaîtront ici">${icons.bell}</button><div class="avatar" title="${esc(s.displayName)}">${initials(s.displayName)}</div></div></header><div class="layout"><aside class="sidebar"><div class="nav-label">${label}</div><nav class="nav">${navHtml}</nav><div class="legal-footer sidebar-legal"><button class="link" data-legal="mentions">Mentions légales</button><button class="link" data-legal="privacy">Confidentialité</button><button class="link" data-legal="terms">CGU</button></div><button class="logout-btn" id="logout">${icons.logout}<span>Se déconnecter</span></button></aside><main class="main">${pendingNotice}${content}</main></div><nav class="mobile-nav">${navHtml}</nav></div>`;
 }
 
 function missionCard(mission) {
@@ -172,7 +237,7 @@ function missionsPage() {
   const isCandidate = state.session.role === 'candidate';
   const sectorOpts = SECTORS.map(s => `<option value="${esc(s)}" ${state.sectorFilter === s ? 'selected' : ''}>${esc(s)}</option>`).join('');
   const statusOpts = Object.entries(missionStatus).map(([k, v]) => `<option value="${k}" ${state.filter === k ? 'selected' : ''}>${v}</option>`).join('');
-  return `<div class="page-head"><div><div class="eyebrow">Missions</div><h1>${isCandidate ? 'Trouver une mission' : 'Gestion des missions'}</h1><p>${isCandidate ? 'L\'identité de l\'entreprise reste confidentielle pendant la sélection.' : 'Créez et suivez chaque besoin de recrutement.'}</p></div>${canCreate ? `<button class="btn btn-primary" data-modal="mission">${icons.plus}<span>Nouvelle mission</span></button>` : ''}</div><div class="toolbar"><label class="search">${icons.search}<input id="search" value="${esc(state.query)}" placeholder="Métier, ville, secteur..."></label><div class="filters"><select class="select" id="sector-filter"><option value="all">Tous les secteurs</option>${sectorOpts}</select>${!isCandidate ? `<select class="select" id="status-filter"><option value="all">Tous les statuts</option>${statusOpts}</select>` : ''}</div></div><section class="card"><div class="card-head"><h2>${visible.length} mission${visible.length > 1 ? 's' : ''}</h2></div>${visible.length ? `<div class="mission-list">${visible.map(missionCard).join('')}</div>` : empty('Aucune mission ne correspond à votre recherche.')}</section>`;
+  return `<div class="page-head"><div><div class="eyebrow">Missions</div><h1>${isCandidate ? 'Trouver une mission' : 'Gestion des missions'}</h1><p>${isCandidate ? 'L\'identité de l\'entreprise reste confidentielle pendant la sélection.' : 'Créez et suivez chaque besoin de recrutement.'}</p></div>${canCreate ? `<button class="btn btn-primary" data-modal="mission">${icons.plus}<span>Nouvelle mission</span></button>` : ''}</div><div class="toolbar"><label class="search">${icons.search}<input id="search" value="${esc(state.query)}" placeholder="Métier, ville, secteur..."></label><div class="filters"><select class="select" id="sector-filter"><option value="all">Tous les secteurs</option>${sectorOpts}</select>${!isCandidate ? `<select class="select" id="status-filter"><option value="all">Tous les statuts</option>${statusOpts}</select>` : ''}</div></div><section class="card"><div class="card-head"><h2>${visible.length} mission${visible.length > 1 ? 's' : ''}</h2></div>${visible.length ? `<div class="mission-list">${visible.map(missionCard).join('')}</div>` : empty('Aucune mission ne correspond à votre recherche.')}${loadMoreButton('missions', 'Charger plus de missions')}</section>`;
 }
 
 function applicationCard(application) {
@@ -192,7 +257,7 @@ function applicationsPage() {
     <td><select class="select" data-application-status="${a.id}">${Object.entries(applicationStatus).map(([k, v]) => `<option value="${k}" ${a.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
     <td><div class="row"><button class="btn btn-light btn-small" data-candidate="${a.id}">${icons.file} Profil & CV</button><button class="btn btn-light btn-small" data-interview="${a.id}">Entretien</button><button class="btn btn-primary btn-small" data-propose="${a.id}">Présenter</button></div></td>
   </tr>`).join('');
-  return `<div class="page-head"><div><div class="eyebrow">Qualification</div><h1>Candidatures</h1><p>Consultez les profils et CV, planifiez les entretiens, puis présentez les meilleurs candidats.</p></div></div><div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Mission</th><th>Date</th><th>Notes internes</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="page-head"><div><div class="eyebrow">Qualification</div><h1>Candidatures</h1><p>Consultez les profils et CV, planifiez les entretiens, puis présentez les meilleurs candidats.</p></div></div><div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Mission</th><th>Date</th><th>Notes internes</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>${loadMoreButton('applications')}`;
 }
 
 function candidatesPage() {
@@ -208,7 +273,7 @@ function candidatesPage() {
       <td><button class="btn btn-light btn-small" data-profile-candidate="${p.id}">Voir profil & CV</button></td>
     </tr>`;
   }).join('') : `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Aucun candidat inscrit.</td></tr>`;
-  return `<div class="page-head"><div><div class="eyebrow">Base candidats</div><h1>Candidats</h1><p>Tous les profils candidats inscrits sur la plateforme.</p></div></div><div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Ville</th><th>Compétences</th><th>Disponibilité</th><th>Profil</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="page-head"><div><div class="eyebrow">Base candidats</div><h1>Candidats</h1><p>Tous les profils candidats inscrits sur la plateforme.</p></div></div><div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Ville</th><th>Compétences</th><th>Disponibilité</th><th>Profil</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>${loadMoreButton('profiles')}`;
 }
 
 function companiesPage() {
@@ -226,7 +291,7 @@ function companiesPage() {
     <td>${action}</td>
   </tr>`;
   }).join('');
-  return `<div class="page-head"><div><div class="eyebrow">Comptes clients</div><h1>Entreprises</h1><p>Validez les entreprises avant leur mise en relation.</p></div></div><div class="table-wrap"><table><thead><tr><th>Entreprise</th><th>Contact</th><th>Ville</th><th>SIRET</th><th>Statut</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="page-head"><div><div class="eyebrow">Comptes clients</div><h1>Entreprises</h1><p>Validez les entreprises avant leur mise en relation.</p></div></div><div class="table-wrap"><table><thead><tr><th>Entreprise</th><th>Contact</th><th>Ville</th><th>SIRET</th><th>Statut</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>${loadMoreButton('companies')}`;
 }
 
 function proposalsPage() {
@@ -253,7 +318,7 @@ function interviewsPage() {
     <td>${esc(i.notes || 'À compléter')}</td>
     <td>${esc(i.score || '—')} / 5</td>
   </tr>`).join('');
-  return `<div class="page-head"><div><div class="eyebrow">Qualification</div><h1>Entretiens</h1><p>Historique des entretiens planifiés et comptes-rendus.</p></div></div><div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Mission</th><th>Date</th><th>Compte-rendu</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="page-head"><div><div class="eyebrow">Qualification</div><h1>Entretiens</h1><p>Historique des entretiens planifiés et comptes-rendus.</p></div></div><div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Mission</th><th>Date</th><th>Compte-rendu</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>${loadMoreButton('interviews')}`;
 }
 
 function profilePage() {
@@ -358,6 +423,7 @@ async function candidateProfileModal(profile) {
 }
 
 function render() {
+  if (state.legalPage) { document.querySelector('#app').innerHTML = legalPageView(); bind(); return; }
   if (state.loading) { document.querySelector('#app').innerHTML = loadingScreen(); return; }
   if (!state.session) { document.querySelector('#app').innerHTML = authScreen(); bind(); return; }
   const pages = {
@@ -417,6 +483,7 @@ function interviewModal(application) {
     try {
       await createInterview({ ...values, applicationId: application.id, candidateId: application.candidateId, candidateName: application.candidateName, missionId: application.missionId, missionTitle: application.missionTitle });
       await updateApplication(application.id, { status: 'interview' });
+      notifyByEmail(application.candidateId, 'Entretien planifié', `Un entretien a été planifié pour votre candidature "${application.missionTitle}".`);
       document.querySelector('.modal-backdrop').remove();
       await refresh('Entretien planifié.');
     } catch (error) { toast(errorMessage(error), true); }
@@ -469,24 +536,51 @@ function bind() {
   document.querySelector('#logout')?.addEventListener('click', () => logout());
   document.querySelectorAll('[data-page]').forEach(el => el.addEventListener('click', () => { state.page = el.dataset.page; state.query = ''; state.filter = 'all'; state.sectorFilter = 'all'; render(); }));
   document.querySelectorAll('[data-toast]').forEach(el => el.addEventListener('click', () => toast(el.dataset.toast)));
+  document.querySelectorAll('[data-legal]').forEach(el => el.addEventListener('click', () => { state.legalPage = el.dataset.legal; render(); }));
+  document.querySelector('[data-legal-back]')?.addEventListener('click', () => { state.legalPage = null; render(); });
   document.querySelectorAll('[data-modal="mission"]').forEach(el => el.addEventListener('click', missionModal));
   document.querySelector('#search')?.addEventListener('input', (e) => { state.query = e.target.value; render(); document.querySelector('#search')?.focus(); });
   document.querySelector('#status-filter')?.addEventListener('change', (e) => { state.filter = e.target.value; render(); });
   document.querySelector('#sector-filter')?.addEventListener('change', (e) => { state.sectorFilter = e.target.value; render(); });
+  document.querySelector('[data-load-more]')?.addEventListener('click', async (e) => {
+    const kind = e.currentTarget.dataset.loadMore;
+    const cursor = state.workspace.pagination?.[kind]?.cursor;
+    e.currentTarget.disabled = true;
+    try {
+      const page = await loadMorePage(state.session, kind, cursor);
+      state.workspace[kind] = state.workspace[kind].concat(page.rows);
+      state.workspace.pagination[kind] = { cursor: page.cursor, hasMore: page.hasMore };
+      render();
+    } catch (error) { toast(errorMessage(error), true); e.currentTarget.disabled = false; }
+  });
   document.querySelectorAll('[data-apply]').forEach(el => el.addEventListener('click', async () => {
     const mission = state.workspace.missions.find(m => m.id === el.dataset.apply);
     try { await applyToMission(state.session, mission); await refresh('Candidature envoyée à l\'administrateur.'); } catch (error) { toast(errorMessage(error), true); }
   }));
   document.querySelectorAll('[data-mission-status]').forEach(el => el.addEventListener('click', async () => {
     const [id, status] = el.dataset.missionStatus.split(':');
-    try { await updateMissionStatus(id, status); await refresh('Statut de la mission mis à jour.'); } catch (error) { toast(errorMessage(error), true); }
+    const mission = state.workspace.missions.find(m => m.id === id);
+    try {
+      await updateMissionStatus(id, status);
+      if (mission) notifyByEmail(mission.companyId, 'Mise à jour de votre mission', `Le statut de la mission "${mission.title}" est maintenant : ${label(missionStatus, status)}.`);
+      await refresh('Statut de la mission mis à jour.');
+    } catch (error) { toast(errorMessage(error), true); }
   }));
   document.querySelectorAll('[data-application-status]').forEach(el => el.addEventListener('change', async () => {
-    try { await updateApplication(el.dataset.applicationStatus, { status: el.value }); await refresh('Candidature mise à jour.'); } catch (error) { toast(errorMessage(error), true); }
+    const application = state.workspace.applications.find(a => a.id === el.dataset.applicationStatus);
+    try {
+      await updateApplication(el.dataset.applicationStatus, { status: el.value });
+      if (application) notifyByEmail(application.candidateId, 'Mise à jour de votre candidature', `Votre candidature pour "${application.missionTitle}" est maintenant : ${label(applicationStatus, el.value)}.`);
+      await refresh('Candidature mise à jour.');
+    } catch (error) { toast(errorMessage(error), true); }
   }));
   document.querySelectorAll('[data-company-status]').forEach(el => el.addEventListener('click', async () => {
     const [id, status] = el.dataset.companyStatus.split(':');
-    try { await updateCompanyStatus(id, status); await refresh('Compte entreprise mis à jour.'); } catch (error) { toast(errorMessage(error), true); }
+    try {
+      await updateCompanyStatus(id, status);
+      notifyByEmail(id, 'Mise à jour de votre compte entreprise', `Votre compte entreprise est maintenant : ${status === 'active' ? 'validé' : 'refusé'}.`);
+      await refresh('Compte entreprise mis à jour.');
+    } catch (error) { toast(errorMessage(error), true); }
   }));
   document.querySelectorAll('[data-interview]').forEach(el => el.addEventListener('click', () => interviewModal(state.workspace.applications.find(a => a.id === el.dataset.interview))));
   document.querySelectorAll('[data-propose]').forEach(el => el.addEventListener('click', () => propose(state.workspace.applications.find(a => a.id === el.dataset.propose))));
