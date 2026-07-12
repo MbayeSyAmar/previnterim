@@ -1,9 +1,9 @@
-name: Scraping quotidien offres Sénégal
+name: Scraping offres Sénégal
 
 on:
   schedule:
-    # 06h00 heure de Dakar (UTC+0 en hiver, UTC+0 toute l'année pour Dakar)
-    - cron: '0 6 * * *'
+    # Toutes les 30 minutes
+    - cron: '*/30 * * * *'
   workflow_dispatch: # Déclenchement manuel depuis l'onglet Actions de GitHub
 
 jobs:
