@@ -2,7 +2,7 @@ name: Scraping offres Sénégal
 
 on:
   schedule:
-    # Toutes les 30 minutes
+    # Toutes les 5 minutes
     - cron: '*/5 * * * *'
   workflow_dispatch: # Déclenchement manuel depuis l'onglet Actions de GitHub
 
