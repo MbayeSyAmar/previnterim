@@ -130,6 +130,23 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // Candidate<->company messaging is only allowed once a chat grant exists for
+    // that pair. The company creates it itself (no Cloud Function involved) right
+    // after accepting a proposal; the rule re-verifies the proposal really is
+    // theirs, really is for that candidate, and is really accepted before it
+    // allows the write.
+    match /chatGrants/{grantId} {
+      allow create: if isAdmin() || (isCompany()
+        && request.resource.data.companyId == request.auth.uid
+        && grantId == request.resource.data.candidateId + '_' + request.resource.data.companyId
+        && get(/databases/$(database)/documents/proposals/$(request.resource.data.proposalId)).data.candidateId == request.resource.data.candidateId
+        && get(/databases/$(database)/documents/proposals/$(request.resource.data.proposalId)).data.companyId == request.auth.uid
+        && get(/databases/$(database)/documents/proposals/$(request.resource.data.proposalId)).data.response == 'accepted');
+      allow read: if isAdmin()
+        || (signedIn() && (resource.data.candidateId == request.auth.uid || resource.data.companyId == request.auth.uid));
+      allow update, delete: if isAdmin();
+    }
+
     match /conversations/{conversationId} {
       function isConvParticipant() {
         return isAdmin() || (signedIn()
@@ -169,6 +186,6 @@ service cloud.firestore {
       }
     }
 
-    // OAuth tokens, temporary states and chat grants are server-only. No client rule is provided.
+    // OAuth tokens and temporary states are server-only. No client rule is provided.
   }
 }

@@ -5,7 +5,6 @@ const { initializeApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 const { FieldValue, getFirestore } = require('firebase-admin/firestore');
 const { defineSecret } = require('firebase-functions/params');
-const { onDocumentUpdated } = require('firebase-functions/v2/firestore');
 const { onRequest } = require('firebase-functions/v2/https');
 const { google } = require('googleapis');
 
@@ -135,27 +134,6 @@ async function uploadDocument(req, res) {
   await db.doc(`candidateProfiles/${candidateId}`).set({ documentProvider: 'google-drive', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   return json(res, 201, { id: documentRef.id, name: driveFile.data.name, documentType: document.documentType });
 }
-
-// ── Chat gating ───────────────────────────────────────────────────────────────
-// A candidate and a company may only message each other once the company has
-// accepted the candidate's (anonymized) proposal. This grant is written here,
-// server-side, so the client can never fabricate the right to chat with a
-// company it wasn't actually presented to.
-
-exports.onProposalAccepted = onDocumentUpdated({ document: 'proposals/{proposalId}', region: 'europe-west1' }, async (event) => {
-  const before = event.data.before.data();
-  const after = event.data.after.data();
-  if (before.response === after.response || after.response !== 'accepted') return;
-  if (!after.candidateId || !after.companyId) return;
-
-  await db.doc(`chatGrants/${after.candidateId}_${after.companyId}`).set({
-    candidateId: after.candidateId,
-    companyId: after.companyId,
-    proposalId: event.params.proposalId,
-    missionId: after.missionId || null,
-    grantedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
-});
 
 exports.api = onRequest({ region: 'europe-west1', secrets: [driveClientSecret], timeoutSeconds: 120, memory: '512MiB' }, async (req, res) => {
   try {

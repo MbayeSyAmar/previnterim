@@ -1,23 +1,22 @@
 import { db } from './firebase.js';
 import {
-  addDoc, collection, doc, getDoc, increment, onSnapshot, orderBy,
+  addDoc, collection, doc, increment, onSnapshot, orderBy,
   query, serverTimestamp, setDoc, updateDoc, where
 } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js';
 
 const rows = (snapshot) => snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
 
-const emptyUnread = { admin: 0, candidate: 0, company: 0 };
 const adminCandidateId = (candidateId) => `adminCandidate_${candidateId}`;
 const adminCompanyId = (companyId) => `adminCompany_${companyId}`;
 const candidateCompanyId = (candidateId, companyId) => `cc_${candidateId}_${companyId}`;
 
-async function ensureConversation(id, data) {
-  const ref = doc(db, 'conversations', id);
-  const snap = await getDoc(ref);
-  if (snap.exists()) return { id, ...snap.data() };
-  const payload = { ...data, lastMessage: '', lastMessageAt: serverTimestamp(), unread: { ...emptyUnread }, createdAt: serverTimestamp() };
-  await setDoc(ref, payload);
-  return { id, ...payload };
+// Merge-set only the static, unchanging fields (type/participants/names) — never
+// lastMessage/unread/createdAt here. Firestore treats this as a create the first
+// time and a no-op update afterwards, so there is no need to read the document
+// first: a read on a not-yet-existing conversation would itself be denied by the
+// security rules (they check resource.data, which requires the doc to exist).
+function ensureConversation(id, data) {
+  return setDoc(doc(db, 'conversations', id), data, { merge: true });
 }
 
 function ensureAdminCandidateConversation(candidateId, candidateName = '') {
@@ -38,6 +37,19 @@ function ensureCandidateCompanyConversation(candidateId, companyId, context = {}
     candidateName: context.candidateName || '', companyName: context.companyName || '',
     missionTitle: context.missionTitle || ''
   });
+}
+
+// Opens the door for candidate<->company messaging. Must be called only after
+// the proposal's `response` is already 'accepted' in Firestore (the security
+// rule re-checks this itself, so calling it earlier simply fails).
+function createChatGrant(proposal, companyId) {
+  return setDoc(doc(db, 'chatGrants', `${proposal.candidateId}_${companyId}`), {
+    candidateId: proposal.candidateId,
+    companyId,
+    proposalId: proposal.id,
+    missionId: proposal.missionId || null,
+    grantedAt: serverTimestamp()
+  }, { merge: true });
 }
 
 function subscribeConversations(session, callback) {
@@ -75,6 +87,6 @@ function markConversationRead(conversation, session) {
 }
 
 export {
-  ensureAdminCandidateConversation, ensureAdminCompanyConversation, ensureCandidateCompanyConversation,
+  createChatGrant, ensureAdminCandidateConversation, ensureAdminCompanyConversation, ensureCandidateCompanyConversation,
   markConversationRead, sendMessage, subscribeConversations, subscribeMessages
 };

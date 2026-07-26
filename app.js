@@ -11,7 +11,7 @@ import {
   respondToTimesheet, submitTimesheet, updateInvoiceStatus, updatePaymentStatus
 } from './workflow.js';
 import {
-  ensureAdminCandidateConversation, ensureAdminCompanyConversation, ensureCandidateCompanyConversation,
+  createChatGrant, ensureAdminCandidateConversation, ensureAdminCompanyConversation, ensureCandidateCompanyConversation,
   markConversationRead, sendMessage, subscribeConversations, subscribeMessages
 } from './messaging.js';
 
@@ -987,7 +987,12 @@ function bind() {
   document.querySelectorAll('[data-profile-candidate]').forEach(el => el.addEventListener('click', () => candidateProfileModal(state.workspace.profiles.find(p => p.id === el.dataset.profileCandidate))));
   document.querySelectorAll('[data-proposal-response]').forEach(el => el.addEventListener('click', async () => {
     const [id, response] = el.dataset.proposalResponse.split(':');
-    try { await respondToProposal(id, response); await refresh('Votre réponse a été transmise à l\'administrateur.'); } catch (error) { toast(errorMessage(error), true); }
+    const proposal = state.workspace.proposals.find(p => p.id === id);
+    try {
+      await respondToProposal(id, response);
+      if (response === 'accepted' && proposal) await createChatGrant(proposal, state.session.uid);
+      await refresh('Votre réponse a été transmise à l\'administrateur.');
+    } catch (error) { toast(errorMessage(error), true); }
   }));
   document.querySelector('#profile-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
