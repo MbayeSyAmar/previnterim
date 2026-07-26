@@ -1,6 +1,7 @@
 ﻿import {
   applyToMission, auth, createInterview, createMission, createProposal,
-  getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals, loadMorePage, loadWorkspace, login, logout,
+  getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals, loadMorePage, loadMorePublicMissions,
+  loadPublicMissions, loadWorkspace, login, logout,
   notifyByEmail, onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile,
   saveCompanyProfile, updateApplication, updateCompanyStatus, updateMissionStatus,
   uploadStorageDocument, uploadCloudinaryDocument
@@ -53,7 +54,8 @@ const state = {
   chat: { conversations: [], activeId: null, messages: [], unsubConversations: null, unsubMessages: null, loading: false },
   facturationTab: 'invoices', timesheetStatusFilter: 'validated',
   page: 'dashboard', query: '', filter: 'all', sectorFilter: 'all', authMode: 'login', loading: true, driveConnected: null,
-  legalPage: null
+  legalPage: null,
+  guestPage: 'missions', publicMissions: [], publicPagination: {}, publicQuery: '', publicSector: 'all', pendingApplyMissionId: null
 };
 
 const LEGAL_CONTENT = {
@@ -192,11 +194,34 @@ function loadingScreen() {
   return `<div class="loading-screen"><div class="brand"><span class="brand-mark">I</span> Interim.</div><div class="spinner"></div><p>Connexion sécurisée...</p></div>`;
 }
 
+function publicMissionCard(mission) {
+  return `<article class="mission"><div><h3>${esc(mission.title)}</h3><div class="meta"><span>${icons.building} Entreprise confidentielle</span><span>${icons.map} ${esc(mission.city)}</span><span>${icons.clock} ${esc(mission.contractType)} · ${esc(mission.duration)}</span><span>${icons.money} <b style="font-size:9px;font-weight:700">FCFA</b> ${esc(mission.pay)}</span>${mission.sector ? `<span class="tag">${esc(mission.sector)}</span>` : ''}</div></div><div class="mission-actions"><button class="btn btn-primary btn-small" data-guest-apply="${mission.id}">Postuler</button></div></article>`;
+}
+
+function publicMissionsScreen() {
+  const visible = state.publicMissions.filter((m) =>
+    `${m.title} ${m.city} ${m.sector}`.toLowerCase().includes(state.publicQuery.toLowerCase()) &&
+    (state.publicSector === 'all' || m.sector === state.publicSector)
+  );
+  const sectorOpts = SECTORS.map((s) => `<option value="${esc(s)}" ${state.publicSector === s ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  return `<div class="shell">
+    <header class="topbar"><a class="brand" data-guest-nav="missions"><span class="brand-mark">I</span> Interim<span style="color:var(--green)">.</span></a>
+      <div class="top-actions"><button class="btn btn-light" data-guest-nav="auth">Se connecter</button><button class="btn btn-primary" id="guest-register">Créer un compte</button></div>
+    </header>
+    <main class="main" style="max-width:1100px;margin:0 auto">
+      <div class="page-head"><div><div class="eyebrow">Offres publiées</div><h1>Trouvez votre prochaine mission</h1><p>Parcourez librement les missions disponibles. Un compte candidat n'est demandé qu'au moment de postuler.</p></div></div>
+      <div class="toolbar"><label class="search">${icons.search}<input id="public-search" value="${esc(state.publicQuery)}" placeholder="Métier, ville, secteur..."></label><div class="filters"><select class="select" id="public-sector-filter"><option value="all">Tous les secteurs</option>${sectorOpts}</select></div></div>
+      <section class="card"><div class="card-head"><h2>${visible.length} mission${visible.length > 1 ? 's' : ''}</h2></div>${visible.length ? `<div class="mission-list">${visible.map(publicMissionCard).join('')}</div>` : empty('Aucune mission ne correspond à votre recherche.')}${state.publicPagination?.hasMore ? '<div class="load-more"><button class="btn btn-light btn-small" data-load-more-public>Charger plus de missions</button></div>' : ''}</section>
+    </main>
+  </div>`;
+}
+
 function authScreen() {
   const reg = state.authMode === 'register';
+  const applyHint = state.pendingApplyMissionId ? '<div class="notice">Créez votre compte candidat (ou connectez-vous) pour finaliser votre candidature.</div>' : '';
   return `<main class="auth-shell">
     <section class="auth-aside"><a class="brand brand-inverse"><span class="brand-mark">I</span> Interim.</a><div><div class="eyebrow" style="color:var(--lime)">Recrutement humain</div><h1>Les bonnes personnes,<br>au bon moment.</h1><p>L'administrateur qualifie chaque candidature et reste l'intermédiaire unique entre candidats et entreprises.</p></div><small>Les coordonnées privées ne sont jamais transmises directement.</small></section>
-    <section class="auth-panel"><div class="auth-card"><div class="eyebrow">Accès sécurisé</div><h2>${reg ? 'Créer votre compte' : 'Bienvenue'}</h2><p>${reg ? 'Choisissez votre espace pour commencer.' : 'Connectez-vous à votre espace Interim.'}</p>
+    <section class="auth-panel"><div class="auth-card"><button class="link" data-guest-nav="missions" style="margin-bottom:16px">← Voir les offres</button>${applyHint}<div class="eyebrow">Accès sécurisé</div><h2>${reg ? 'Créer votre compte' : 'Bienvenue'}</h2><p>${reg ? 'Choisissez votre espace pour commencer.' : 'Connectez-vous à votre espace Interim.'}</p>
       <form id="auth-form" class="form-grid auth-form">
         ${reg ? `<div class="field full"><label>Type de compte</label><select name="role" id="register-role"><option value="candidate">Candidat</option><option value="company">Entreprise</option></select></div><div class="field full company-only" hidden><label>Nom de l'entreprise</label><input name="companyName"></div><div class="field"><label>Nom et prénom du contact</label><input name="name" required></div><div class="field"><label>Téléphone</label><input name="phone" required></div><div class="field"><label>Ville</label><input name="city" required></div><div class="field company-only" hidden><label>SIRET (optionnel)</label><input name="siret"></div>` : ''}
         <div class="field full"><label>Email</label><input name="email" type="email" autocomplete="email" required></div>
@@ -814,7 +839,11 @@ async function candidateProfileModal(profile) {
 function render() {
   if (state.legalPage) { document.querySelector('#app').innerHTML = legalPageView(); bind(); return; }
   if (state.loading) { document.querySelector('#app').innerHTML = loadingScreen(); return; }
-  if (!state.session) { document.querySelector('#app').innerHTML = authScreen(); bind(); return; }
+  if (!state.session) {
+    document.querySelector('#app').innerHTML = state.guestPage === 'auth' ? authScreen() : publicMissionsScreen();
+    bind();
+    return;
+  }
   const pages = {
     dashboard, missions: missionsPage, applications: applicationsPage,
     candidates: candidatesPage, companies: companiesPage, proposals: proposalsPage,
@@ -919,6 +948,29 @@ async function propose(application) {
 }
 
 function bind() {
+  document.querySelectorAll('[data-guest-nav]').forEach(el => el.addEventListener('click', () => {
+    state.guestPage = el.dataset.guestNav;
+    if (state.guestPage === 'missions') state.pendingApplyMissionId = null;
+    render();
+  }));
+  document.querySelector('#guest-register')?.addEventListener('click', () => { state.guestPage = 'auth'; state.authMode = 'register'; render(); });
+  document.querySelectorAll('[data-guest-apply]').forEach(el => el.addEventListener('click', () => {
+    state.pendingApplyMissionId = el.dataset.guestApply;
+    state.guestPage = 'auth'; state.authMode = 'register';
+    render();
+    toast('Créez votre compte candidat pour postuler.');
+  }));
+  document.querySelector('#public-search')?.addEventListener('input', (e) => { state.publicQuery = e.target.value; render(); document.querySelector('#public-search')?.focus(); });
+  document.querySelector('#public-sector-filter')?.addEventListener('change', (e) => { state.publicSector = e.target.value; render(); });
+  document.querySelector('[data-load-more-public]')?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const page = await loadMorePublicMissions(state.publicPagination?.cursor);
+      state.publicMissions = state.publicMissions.concat(page.rows);
+      state.publicPagination = { cursor: page.cursor, hasMore: page.hasMore };
+      render();
+    } catch (error) { toast(errorMessage(error), true); e.currentTarget.disabled = false; }
+  });
   document.querySelector('#auth-toggle')?.addEventListener('click', () => { state.authMode = state.authMode === 'login' ? 'register' : 'login'; render(); });
   document.querySelector('#register-role')?.addEventListener('change', (e) => document.querySelectorAll('.company-only').forEach(el => el.hidden = e.target.value !== 'company'));
   document.querySelector('#auth-form')?.addEventListener('submit', async (event) => {
@@ -1094,9 +1146,32 @@ function bind() {
   });
 }
 
+async function applyPendingMission() {
+  const missionId = state.pendingApplyMissionId;
+  state.pendingApplyMissionId = null;
+  if (!missionId || state.session.role !== 'candidate') return;
+  if (state.workspace.applications.some((a) => a.missionId === missionId)) return;
+  const mission = state.workspace.missions.find((m) => m.id === missionId);
+  if (!mission) return toast('Cette mission n\'est plus disponible ; retrouvez-la depuis "Trouver une mission".', true);
+  try {
+    await applyToMission(state.session, mission);
+    state.workspace = await loadWorkspace(state.session);
+    toast('Compte créé et candidature envoyée à l\'administrateur.');
+  } catch (error) { toast(errorMessage(error), true); }
+}
+
 onAuthStateChanged(auth, async (user) => {
   state.loading = true; render();
-  if (!user) { leaveMessages(); state.session = null; state.loading = false; render(); return; }
+  if (!user) {
+    leaveMessages(); state.session = null; state.loading = false;
+    try {
+      const pub = await loadPublicMissions();
+      state.publicMissions = pub.missions;
+      state.publicPagination = pub.pagination;
+    } catch (error) { toast(errorMessage(error), true); }
+    render();
+    return;
+  }
   try {
     state.session = await getSessionProfile(user);
     const [workspace, workflowSpace, acceptedProposals] = await Promise.all([
@@ -1106,6 +1181,7 @@ onAuthStateChanged(auth, async (user) => {
     state.workflowSpace = workflowSpace;
     state.acceptedProposals = acceptedProposals;
     state.page = 'dashboard';
+    await applyPendingMission();
   } catch (error) { toast(errorMessage(error), true); await logout(); }
   state.loading = false;
   render();

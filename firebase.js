@@ -275,6 +275,17 @@ async function loadWorkspace(session) {
   return result;
 }
 
+// Public job board: no auth required, only ever the published missions.
+async function loadPublicMissions() {
+  const snap = await getDocs(query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE)));
+  return { missions: rows(snap), pagination: pageInfo(snap) };
+}
+
+async function loadMorePublicMissions(cursor) {
+  const snap = await getDocs(query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE)));
+  return { rows: rows(snap), ...pageInfo(snap) };
+}
+
 const MORE_PAGE_QUERIES = {
   candidate: {
     missions: (cursor) => query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE))
@@ -386,8 +397,9 @@ async function getDocumentsForCandidate(candidateId) {
 export {
   applyToMission, auth, createInterview, createMission, createProposal, db, firebaseApp,
   connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals,
-  loadMorePage, loadWorkspace, login, logout, notifyByEmail, onAuthStateChanged, register, resetPassword,
-  respondToProposal, saveCandidateProfile, saveCompanyProfile, storage, triggerScrape, updateApplication,
+  loadMorePage, loadMorePublicMissions, loadPublicMissions, loadWorkspace, login, logout, notifyByEmail,
+  onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile, saveCompanyProfile,
+  storage, triggerScrape, updateApplication,
   updateCompanyStatus, updateMissionStatus, uploadDriveDocument, uploadStorageDocument,
   uploadCloudinaryDocument
 };

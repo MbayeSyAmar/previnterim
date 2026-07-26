@@ -28,8 +28,10 @@ service cloud.firestore {
     }
 
     match /missions/{missionId} {
+      // Published missions are a public job board: readable without an account.
+      // Applying still requires signing in (see /applications below).
       allow read: if isAdmin()
-        || (signedIn() && resource.data.status == 'published')
+        || resource.data.status == 'published'
         || (isCompany() && resource.data.companyId == request.auth.uid);
       allow create: if isAdmin() || (isCompany()
         && userData().status == 'active'
