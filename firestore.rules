@@ -131,17 +131,21 @@ service cloud.firestore {
     }
 
     // Candidate<->company messaging is only allowed once a chat grant exists for
-    // that pair. The company creates it itself (no Cloud Function involved) right
-    // after accepting a proposal; the rule re-verifies the proposal really is
-    // theirs, really is for that candidate, and is really accepted before it
-    // allows the write.
+    // that pair. No Cloud Function involved: either side can create/self-heal it
+    // (company at accept-time, or either side later when opening Messages), but
+    // the rule always re-verifies a matching proposal really exists, really is
+    // for that candidate/company pair, and really is accepted.
     match /chatGrants/{grantId} {
-      allow create: if isAdmin() || (isCompany()
-        && request.resource.data.companyId == request.auth.uid
-        && grantId == request.resource.data.candidateId + '_' + request.resource.data.companyId
-        && get(/databases/$(database)/documents/proposals/$(request.resource.data.proposalId)).data.candidateId == request.resource.data.candidateId
-        && get(/databases/$(database)/documents/proposals/$(request.resource.data.proposalId)).data.companyId == request.auth.uid
-        && get(/databases/$(database)/documents/proposals/$(request.resource.data.proposalId)).data.response == 'accepted');
+      function proposalData() {
+        return get(/databases/$(database)/documents/proposals/$(request.resource.data.proposalId)).data;
+      }
+      allow create: if isAdmin()
+        || (grantId == request.resource.data.candidateId + '_' + request.resource.data.companyId
+          && proposalData().candidateId == request.resource.data.candidateId
+          && proposalData().companyId == request.resource.data.companyId
+          && proposalData().response == 'accepted'
+          && ((isCompany() && request.resource.data.companyId == request.auth.uid)
+            || (isCandidate() && request.resource.data.candidateId == request.auth.uid)));
       allow read: if isAdmin()
         || (signedIn() && (resource.data.candidateId == request.auth.uid || resource.data.companyId == request.auth.uid));
       allow update, delete: if isAdmin();

@@ -511,24 +511,32 @@ async function enterMessages() {
   const session = state.session;
   const token = (state.chat.token = (state.chat.token || 0) + 1);
   state.chat.loading = true;
-  try {
-    const accepted = state.acceptedProposals || [];
-    if (session.role === 'candidate') {
-      await ensureAdminCandidateConversation(session.uid, session.displayName);
-      const companyIds = [...new Set(accepted.map((p) => p.companyId))];
-      for (const companyId of companyIds) {
-        const p = accepted.find((x) => x.companyId === companyId);
+  const accepted = state.acceptedProposals || [];
+  if (session.role === 'candidate') {
+    try { await ensureAdminCandidateConversation(session.uid, session.displayName); } catch (error) { toast(errorMessage(error), true); }
+    const companyIds = [...new Set(accepted.map((p) => p.companyId))];
+    for (const companyId of companyIds) {
+      const p = accepted.find((x) => x.companyId === companyId);
+      try {
+        // Best-effort self-heal: the grant is normally created by the company at
+        // accept-time, but a candidate can also create it themselves (the rule
+        // re-verifies a real accepted proposal), which covers proposals accepted
+        // before this existed or if that earlier write never completed.
+        await createChatGrant(p, companyId);
         await ensureCandidateCompanyConversation(session.uid, companyId, { missionTitle: p.missionTitle });
-      }
-    } else if (session.role === 'company') {
-      await ensureAdminCompanyConversation(session.uid, session.displayName);
-      const candidateIds = [...new Set(accepted.map((p) => p.candidateId))];
-      for (const candidateId of candidateIds) {
-        const p = accepted.find((x) => x.candidateId === candidateId);
-        await ensureCandidateCompanyConversation(candidateId, session.uid, { candidateName: p.anonymousName, missionTitle: p.missionTitle });
-      }
+      } catch { /* this one thread stays unavailable; others must not be blocked */ }
     }
-  } catch (error) { toast(errorMessage(error), true); }
+  } else if (session.role === 'company') {
+    try { await ensureAdminCompanyConversation(session.uid, session.displayName); } catch (error) { toast(errorMessage(error), true); }
+    const candidateIds = [...new Set(accepted.map((p) => p.candidateId))];
+    for (const candidateId of candidateIds) {
+      const p = accepted.find((x) => x.candidateId === candidateId);
+      try {
+        await createChatGrant(p, session.uid);
+        await ensureCandidateCompanyConversation(candidateId, session.uid, { candidateName: p.anonymousName, missionTitle: p.missionTitle });
+      } catch { /* this one thread stays unavailable; others must not be blocked */ }
+    }
+  }
   if (state.chat.token !== token) return;
   state.chat.loading = false;
   state.chat.unsubConversations = subscribeConversations(session, (conversations) => {
