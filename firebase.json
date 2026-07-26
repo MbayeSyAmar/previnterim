@@ -4,7 +4,10 @@
   "storage": { "rules": "storage.rules" },
   "hosting": {
     "public": ".",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "functions/**", "firestore.rules", "firestore.indexes.json", "storage.rules", "README.md"],
+    "ignore": [
+      "firebase.json", "**/.*", "**/node_modules/**", "functions/**", "firestore.rules", "firestore.indexes.json", "storage.rules", "README.md",
+      "BonCoin_Front/**", "bonCoin_backend/**", "business_brief.html", "logo.html", "BonCoin.code-workspace"
+    ],
     "rewrites": [
       { "source": "/api/**", "function": { "functionId": "api", "region": "europe-west1" } },
       { "source": "**", "destination": "/index.html" }
