@@ -366,6 +366,14 @@ function respondToProposal(id, response) {
   return updateDoc(doc(db, 'proposals', id), { response, updatedAt: serverTimestamp() });
 }
 
+async function loadAcceptedProposals(session) {
+  const field = session.role === 'candidate' ? 'candidateId' : 'companyId';
+  const snap = await getDocs(query(
+    collection(db, 'proposals'), where(field, '==', session.uid), where('response', '==', 'accepted')
+  ));
+  return rows(snap);
+}
+
 function createInterview(values) {
   return addDoc(collection(db, 'interviews'), { ...values, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
 }
@@ -377,9 +385,9 @@ async function getDocumentsForCandidate(candidateId) {
 
 export {
   applyToMission, auth, createInterview, createMission, createProposal, db, firebaseApp,
-  connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, loadMorePage, loadWorkspace,
-  login, logout, notifyByEmail, onAuthStateChanged, register, resetPassword, respondToProposal,
-  saveCandidateProfile, saveCompanyProfile, storage, triggerScrape, updateApplication,
+  connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals,
+  loadMorePage, loadWorkspace, login, logout, notifyByEmail, onAuthStateChanged, register, resetPassword,
+  respondToProposal, saveCandidateProfile, saveCompanyProfile, storage, triggerScrape, updateApplication,
   updateCompanyStatus, updateMissionStatus, uploadDriveDocument, uploadStorageDocument,
   uploadCloudinaryDocument
 };

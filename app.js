@@ -1,10 +1,19 @@
 ﻿import {
   applyToMission, auth, createInterview, createMission, createProposal,
-  getDocumentsForCandidate, getSessionProfile, loadMorePage, loadWorkspace, login, logout,
+  getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals, loadMorePage, loadWorkspace, login, logout,
   notifyByEmail, onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile,
   saveCompanyProfile, updateApplication, updateCompanyStatus, updateMissionStatus,
   uploadStorageDocument, uploadCloudinaryDocument
 } from './firebase.js';
+import {
+  createFollowUp, createPlacement, endPlacement, generateInvoiceAndPayment,
+  loadFollowUps, loadMoreTimesheets, loadTimesheetsWorkspace, loadWorkflowWorkspace, resubmitTimesheet,
+  respondToTimesheet, submitTimesheet, updateInvoiceStatus, updatePaymentStatus
+} from './workflow.js';
+import {
+  ensureAdminCandidateConversation, ensureAdminCompanyConversation, ensureCandidateCompanyConversation,
+  markConversationRead, sendMessage, subscribeConversations, subscribeMessages
+} from './messaging.js';
 
 const icons = {
   grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>',
@@ -21,7 +30,8 @@ const icons = {
   clock: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   map: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2"/></svg>',
   money: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="8" width="20" height="12" rx="2"/><circle cx="12" cy="14" r="3"/></svg>',
-  logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 17l5-5-5-5M15 12H3M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>'
+  logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 17l5-5-5-5M15 12H3M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>',
+  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5Z"/></svg>'
 };
 
 const SCRAPE_TTL_DAYS = 5;
@@ -38,6 +48,10 @@ const DOC_TYPES = { cv: 'CV', identity: "Pièce d'identité", certificate: 'Cert
 const state = {
   session: null,
   workspace: { missions: [], applications: [], profiles: [], companies: [], proposals: [], interviews: [] },
+  workflowSpace: { placements: [], timesheets: [], invoices: [], payments: [], pagination: {} },
+  acceptedProposals: [],
+  chat: { conversations: [], activeId: null, messages: [], unsubConversations: null, unsubMessages: null, loading: false },
+  facturationTab: 'invoices', timesheetStatusFilter: 'validated',
   page: 'dashboard', query: '', filter: 'all', sectorFilter: 'all', authMode: 'login', loading: true, driveConnected: null,
   legalPage: null
 };
@@ -107,18 +121,26 @@ const nav = {
     ['applications', 'users', 'Candidatures'],
     ['candidates', 'user', 'Candidats'],
     ['companies', 'building', 'Entreprises'],
-    ['interviews', 'calendar', 'Entretiens']
+    ['interviews', 'calendar', 'Entretiens'],
+    ['placements', 'check', 'Placements'],
+    ['facturation', 'money', 'Facturation'],
+    ['messages', 'chat', 'Messages']
   ],
   candidate: [
     ['dashboard', 'grid', 'Vue d\'ensemble'],
     ['missions', 'search', 'Trouver une mission'],
     ['applications', 'file', 'Mes candidatures'],
+    ['placements', 'check', 'Mes placements'],
+    ['messages', 'chat', 'Messages'],
     ['profile', 'user', 'Mon profil']
   ],
   company: [
     ['dashboard', 'grid', 'Vue d\'ensemble'],
     ['missions', 'briefcase', 'Mes missions'],
     ['proposals', 'users', 'Profils proposés'],
+    ['placements', 'check', 'Placements'],
+    ['facturation', 'money', 'Factures'],
+    ['messages', 'chat', 'Messages'],
     ['profile', 'building', 'Mon entreprise']
   ]
 };
@@ -126,6 +148,11 @@ const nav = {
 const missionStatus = { pending: 'À valider', published: 'Publiée', suspended: 'Suspendue', closed: 'Clôturée' };
 const applicationStatus = { pending: 'En attente', reviewing: 'En cours d\'examen', interview: 'Entretien prévu', presented: 'Présenté au client', accepted: 'Accepté', rejected: 'Refusé' };
 const proposalStatus = { pending: 'Réponse attendue', accepted: 'Accepté', rejected: 'Refusé' };
+const placementStatus = { active: 'Actif', ended: 'Terminé' };
+const timesheetStatus = { submitted: 'Soumise', validated: 'Validée', disputed: 'Contestée', locked: 'Verrouillée' };
+const invoiceStatus = { draft: 'Brouillon', sent: 'Envoyée', paid: 'Payée' };
+const paymentStatus = { pending: 'En attente', paid: 'Payé' };
+const endReasonLabel = { completed: 'Mission terminée normalement', candidate: 'Rompu par le candidat', company: 'Rompu par l\'entreprise', other: 'Autre' };
 
 const esc = (value = '') => String(value).replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 const initials = (name = '') => name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
@@ -321,6 +348,360 @@ function interviewsPage() {
   return `<div class="page-head"><div><div class="eyebrow">Qualification</div><h1>Entretiens</h1><p>Historique des entretiens planifiés et comptes-rendus.</p></div></div><div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Mission</th><th>Date</th><th>Compte-rendu</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>${loadMoreButton('interviews')}`;
 }
 
+// ── Placements, feuilles de temps, facturation ────────────────────────────────
+
+function placementsPage() {
+  const role = state.session.role;
+  if (role === 'admin') return adminPlacementsPage();
+  if (role === 'company') return companyPlacementsPage();
+  return candidatePlacementsPage();
+}
+
+function adminPlacementsPage() {
+  const w = state.workflowSpace;
+  const placedProposalIds = new Set(w.placements.map((p) => p.proposalId));
+  const toConfirm = state.workspace.proposals.filter((p) => p.response === 'accepted' && !placedProposalIds.has(p.id));
+  const active = w.placements.filter((p) => p.status === 'active');
+  const ended = w.placements.filter((p) => p.status === 'ended');
+
+  const toConfirmCard = (p) => {
+    const profile = state.workspace.profiles.find((x) => x.id === p.candidateId) || {};
+    return `<article class="candidate"><div class="candidate-top"><div><h3>${esc(profile.name || p.anonymousName)}</h3><p>${esc(p.missionTitle)} · ${esc(p.city || '')}</p></div></div><div class="candidate-foot"><span>Accepté par l'entreprise</span><button class="btn btn-primary btn-small" data-confirm-placement="${p.id}">Confirmer le placement</button></div></article>`;
+  };
+  const placementCard = (p) => `<article class="candidate"><div class="candidate-top"><div><h3>${esc(p.candidateName)}</h3><p>${esc(p.missionTitle)} · ${esc(p.companyName)}</p></div>${badge(label(placementStatus, p.status))}</div><div class="tags"><span class="tag">${esc(p.billRate)} FCFA/h facturé</span>${p.payRate != null ? `<span class="tag">${esc(p.payRate)} FCFA/h payé</span>` : ''}</div><div class="candidate-foot"><span>${p.status === 'ended' ? 'Terminé le ' + esc(p.endDate) : 'Depuis le ' + esc(p.startDate || '—')}</span><div class="row"><button class="btn btn-light btn-small" data-placement-detail="${p.id}">Suivi</button>${p.status === 'active' ? `<button class="btn btn-primary btn-small" data-generate-invoice="${p.id}">Facturer</button>` : ''}</div></div></article>`;
+
+  return `<div class="page-head"><div><div class="eyebrow">Suivi candidat</div><h1>Placements</h1><p>De l'acceptation par l'entreprise jusqu'à la fin de mission.</p></div></div>
+    <div class="kanban">
+      <div class="column"><div class="column-head">À confirmer<span class="count">${toConfirm.length}</span></div>${toConfirm.length ? toConfirm.map(toConfirmCard).join('') : empty('Aucune proposition acceptée en attente.')}</div>
+      <div class="column"><div class="column-head">Actifs<span class="count">${active.length}</span></div>${active.length ? active.map(placementCard).join('') : empty('Aucun placement actif.')}</div>
+      <div class="column"><div class="column-head">Terminés<span class="count">${ended.length}</span></div>${ended.length ? ended.map(placementCard).join('') : empty('Aucun placement terminé.')}</div>
+    </div>`;
+}
+
+function companyPlacementsPage() {
+  const w = state.workflowSpace;
+  const active = w.placements.filter((p) => p.status === 'active');
+  const ended = w.placements.filter((p) => p.status === 'ended');
+  const pendingTimesheets = w.timesheets.filter((t) => t.status === 'submitted');
+
+  const timesheetRow = (t) => `<tr><td><strong>${esc(t.candidateName)}</strong></td><td>${esc(t.missionTitle)}</td><td>${esc(t.periodStart)} → ${esc(t.periodEnd)}</td><td>${esc(t.totalHours)} h</td><td><div class="row"><button class="btn btn-primary btn-small" data-timesheet-validate="${t.id}">Valider</button><button class="btn btn-light btn-small" data-timesheet-dispute="${t.id}">Contester</button></div></td></tr>`;
+  const placementCard = (p) => `<article class="mission"><div><h3>${esc(p.candidateName)}</h3><div class="meta"><span>${icons.briefcase} ${esc(p.missionTitle)}</span><span>${icons.money} ${esc(p.billRate)} FCFA/h</span><span>${icons.clock} ${p.status === 'ended' ? 'Terminé le ' + esc(p.endDate) : 'Depuis le ' + esc(p.startDate || '—')}</span></div></div>${badge(label(placementStatus, p.status))}</article>`;
+
+  return `<div class="page-head"><div><div class="eyebrow">Missions en cours</div><h1>Placements</h1><p>Validez les heures déclarées par vos intérimaires.</p></div></div>
+    <section class="card"><div class="card-head"><h2>Feuilles de temps à valider</h2></div>${pendingTimesheets.length ? `<div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Mission</th><th>Période</th><th>Heures</th><th>Action</th></tr></thead><tbody>${pendingTimesheets.map(timesheetRow).join('')}</tbody></table></div>` : empty('Aucune feuille de temps en attente.')}</section>
+    <section class="card"><div class="card-head"><h2>Placements actifs</h2></div>${active.length ? `<div class="mission-list">${active.map(placementCard).join('')}</div>` : empty('Aucun placement actif.')}</section>
+    ${ended.length ? `<section class="card"><div class="card-head"><h2>Placements terminés</h2></div><div class="mission-list">${ended.map(placementCard).join('')}</div></section>` : ''}`;
+}
+
+function candidatePlacementsPage() {
+  const w = state.workflowSpace;
+  const active = w.placements.filter((p) => p.status === 'active');
+  const ended = w.placements.filter((p) => p.status === 'ended');
+  const pending = state.acceptedProposals.filter((p) => !w.placements.some((pl) => pl.proposalId === p.id));
+
+  const timesheetRow = (t) => `<tr><td>${esc(t.periodStart)} → ${esc(t.periodEnd)}</td><td>${esc(t.totalHours)} h</td><td>${badge(label(timesheetStatus, t.status))}</td><td>${t.companyNote ? `<span class="note-preview" title="${esc(t.companyNote)}">${esc(t.companyNote.substring(0, 30))}${t.companyNote.length > 30 ? '…' : ''}</span>` : '<span style="color:var(--muted)">—</span>'}</td><td>${t.status === 'disputed' ? `<button class="btn btn-light btn-small" data-edit-timesheet="${t.id}">Modifier et renvoyer</button>` : ''}</td></tr>`;
+  const placementBlock = (p) => {
+    const items = w.timesheets.filter((t) => t.placementId === p.id);
+    return `<section class="card">
+      <div class="card-head"><div><h2>${esc(p.missionTitle)}</h2><p style="color:var(--muted);font-size:12px;margin:4px 0 0">${esc(p.companyName)}${p.payRate != null ? ' · ' + esc(p.payRate) + ' FCFA/h' : ''}</p></div><div class="row">${badge(label(placementStatus, p.status))}${p.status === 'active' ? `<button class="btn btn-primary btn-small" data-new-timesheet="${p.id}">Nouvelle feuille de temps</button>` : ''}</div></div>
+      <div class="table-wrap"><table><thead><tr><th>Période</th><th>Heures</th><th>Statut</th><th>Note entreprise</th><th></th></tr></thead><tbody>${items.length ? items.map(timesheetRow).join('') : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">Aucune feuille de temps.</td></tr>'}</tbody></table></div>
+    </section>`;
+  };
+  const pendingCard = (p) => `<article class="candidate"><div class="candidate-top"><div><h3>${esc(p.missionTitle)}</h3><p>Votre profil a été accepté, l'équipe Interim finalise votre placement.</p></div></div></article>`;
+
+  return `<div class="page-head"><div><div class="eyebrow">Mon parcours</div><h1>Mes placements</h1><p>Déclarez vos heures et suivez vos paiements.</p></div></div>
+    ${pending.length ? `<section class="card"><div class="card-head"><h2>En attente de confirmation</h2></div><div class="candidate-list">${pending.map(pendingCard).join('')}</div></section>` : ''}
+    ${active.length || ended.length ? [...active, ...ended].map(placementBlock).join('') : empty('Aucun placement pour le moment.')}
+    <section class="card"><div class="card-head"><h2>Mes paiements</h2></div>${w.payments.length ? `<div class="table-wrap"><table><thead><tr><th>Période</th><th>Heures</th><th>Montant</th><th>Statut</th></tr></thead><tbody>${w.payments.map((pay) => `<tr><td>${esc(pay.periodStart)} → ${esc(pay.periodEnd)}</td><td>${esc(pay.hours)} h</td><td>${esc(pay.amount)} FCFA</td><td>${badge(label(paymentStatus, pay.status))}</td></tr>`).join('')}</tbody></table></div>` : empty('Aucun paiement pour le moment.')}</section>`;
+}
+
+function facturationPage() {
+  return state.session.role === 'admin' ? adminFacturationPage() : companyFacturesPage();
+}
+
+function adminFacturationPage() {
+  const w = state.workflowSpace;
+  const tab = state.facturationTab;
+  const timesheetRow = (t) => `<tr><td><strong>${esc(t.candidateName)}</strong></td><td>${esc(t.missionTitle)}</td><td>${esc(t.periodStart)} → ${esc(t.periodEnd)}</td><td>${esc(t.totalHours)} h</td><td>${badge(label(timesheetStatus, t.status))}</td></tr>`;
+  const invoiceRow = (inv) => {
+    const payment = w.payments.find((p) => p.id === inv.paymentId);
+    const commission = payment ? inv.totalAmount - payment.amount : null;
+    return `<tr>
+      <td><strong>${esc(inv.companyName)}</strong></td>
+      <td>${esc(inv.periodStart)} → ${esc(inv.periodEnd)}</td>
+      <td>${esc(inv.totalAmount)} FCFA</td>
+      <td>${badge(label(invoiceStatus, inv.status))}</td>
+      <td>${payment ? esc(payment.amount) + ' FCFA · ' + label(paymentStatus, payment.status) : '—'}</td>
+      <td>${commission != null ? esc(commission) + ' FCFA' : '—'}</td>
+      <td><div class="row">
+        ${inv.status === 'draft' ? `<button class="btn btn-primary btn-small" data-invoice-status="${inv.id}:sent">Marquer envoyée</button>` : ''}
+        ${inv.status === 'sent' ? `<button class="btn btn-primary btn-small" data-invoice-status="${inv.id}:paid">Marquer payée</button>` : ''}
+        ${payment && payment.status === 'pending' ? `<button class="btn btn-light btn-small" data-payment-status="${payment.id}:paid">Payer candidat</button>` : ''}
+      </div></td>
+    </tr>`;
+  };
+  const statusOpts = ['validated', 'submitted', 'disputed', 'locked', 'all']
+    .map((k) => `<option value="${k}" ${state.timesheetStatusFilter === k ? 'selected' : ''}>${k === 'all' ? 'Toutes' : label(timesheetStatus, k)}</option>`).join('');
+
+  return `<div class="page-head"><div><div class="eyebrow">Argent</div><h1>Facturation</h1><p>Factures entreprises, paiements candidats et commission.</p></div></div>
+    <div class="toolbar"><div class="filters">
+      <select class="select" id="facturation-tab"><option value="invoices" ${tab === 'invoices' ? 'selected' : ''}>Factures &amp; paiements</option><option value="timesheets" ${tab === 'timesheets' ? 'selected' : ''}>Feuilles de temps</option></select>
+      ${tab === 'timesheets' ? `<select class="select" id="timesheet-status-filter">${statusOpts}</select>` : ''}
+    </div></div>
+    ${tab === 'timesheets'
+      ? `<div class="table-wrap"><table><thead><tr><th>Candidat</th><th>Mission</th><th>Période</th><th>Heures</th><th>Statut</th></tr></thead><tbody>${w.timesheets.length ? w.timesheets.map(timesheetRow).join('') : '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted)">Aucune feuille de temps.</td></tr>'}</tbody></table></div>${w.pagination?.timesheets?.hasMore ? '<div class="load-more"><button class="btn btn-light btn-small" data-load-more-timesheets>Charger plus</button></div>' : ''}`
+      : `<div class="table-wrap"><table><thead><tr><th>Entreprise</th><th>Période</th><th>Facturé</th><th>Statut</th><th>Paiement candidat</th><th>Commission</th><th>Action</th></tr></thead><tbody>${w.invoices.length ? w.invoices.map(invoiceRow).join('') : '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--muted)">Aucune facture.</td></tr>'}</tbody></table></div>`}`;
+}
+
+function companyFacturesPage() {
+  const invoices = state.workflowSpace.invoices;
+  const row = (inv) => `<tr><td>${esc(inv.periodStart)} → ${esc(inv.periodEnd)}</td><td>${esc(inv.totalAmount)} FCFA</td><td>${badge(label(invoiceStatus, inv.status))}</td></tr>`;
+  return `<div class="page-head"><div><div class="eyebrow">Facturation</div><h1>Mes factures</h1><p>Historique de facturation pour vos missions intérim.</p></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Période</th><th>Montant</th><th>Statut</th></tr></thead><tbody>${invoices.length ? invoices.map(row).join('') : '<tr><td colspan="3" style="text-align:center;padding:30px;color:var(--muted)">Aucune facture pour le moment.</td></tr>'}</tbody></table></div>`;
+}
+
+// ── Messagerie ─────────────────────────────────────────────────────────────
+
+function threadName(conversation) {
+  const s = state.session;
+  if (!conversation) return '';
+  if (conversation.type === 'admin-candidate' || conversation.type === 'admin-company') return s.role === 'admin' ? (conversation.candidateName || conversation.companyName || 'Équipe Interim') : 'Équipe Interim';
+  if (s.role === 'candidate') return conversation.companyName || 'Entreprise';
+  if (s.role === 'company') return conversation.candidateName || 'Candidat';
+  return `${conversation.candidateName || 'Candidat'} ↔ ${conversation.companyName || 'Entreprise'}`;
+}
+
+function messagesPage() {
+  const s = state.session;
+  const conversation = state.chat.conversations.find((c) => c.id === state.chat.activeId);
+  const list = state.chat.conversations
+    .slice()
+    .sort((a, b) => (b.lastMessageAt?.toMillis?.() || 0) - (a.lastMessageAt?.toMillis?.() || 0))
+    .map((c) => `<button class="chat-item ${c.id === state.chat.activeId ? 'active' : ''}" data-select-conversation="${c.id}"><span>${esc(threadName(c))}</span>${c.unread?.[s.role] ? `<span class="chat-unread">${c.unread[s.role]}</span>` : ''}</button>`)
+    .join('');
+  const messages = state.chat.messages
+    .map((m) => `<div class="bubble ${m.senderId === s.uid ? 'mine' : ''}"><p>${esc(m.text)}</p><time>${m.createdAt?.toDate ? m.createdAt.toDate().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}</time></div>`)
+    .join('');
+  const intro = s.role === 'candidate' ? 'Échangez avec l\'équipe Interim, et avec l\'entreprise une fois votre profil accepté.'
+    : s.role === 'company' ? 'Échangez avec l\'équipe Interim et avec les candidats que vous avez acceptés.'
+    : 'Toutes les conversations candidats et entreprises.';
+
+  return `<div class="page-head"><div><div class="eyebrow">Échanges</div><h1>Messages</h1><p>${intro}</p></div></div>
+    <div class="chat-shell">
+      <aside class="chat-list">${state.chat.loading ? '<p class="muted-block" style="padding:16px">Chargement...</p>' : (list || empty('Aucune conversation pour le moment.'))}</aside>
+      <section class="chat-panel">
+        ${conversation
+          ? `<div class="chat-panel-head">${esc(threadName(conversation))}</div><div class="chat-thread" id="chat-thread">${messages || '<p class="muted-block" style="padding:20px">Aucun message pour le moment.</p>'}</div><form id="chat-form" class="chat-input"><input name="text" placeholder="Écrire un message..." autocomplete="off" required><button class="btn btn-primary btn-small">Envoyer</button></form>`
+          : '<div class="chat-panel-empty">Sélectionnez une conversation.</div>'}
+      </section>
+    </div>`;
+}
+
+function preserveChatInput(renderFn) {
+  const input = document.querySelector('#chat-form [name=text]');
+  const draft = input ? input.value : '';
+  const hadFocus = document.activeElement === input;
+  renderFn();
+  if (!draft) return;
+  const newInput = document.querySelector('#chat-form [name=text]');
+  if (newInput) { newInput.value = draft; if (hadFocus) newInput.focus(); }
+}
+
+async function enterMessages() {
+  const session = state.session;
+  const token = (state.chat.token = (state.chat.token || 0) + 1);
+  state.chat.loading = true;
+  try {
+    const accepted = state.acceptedProposals || [];
+    if (session.role === 'candidate') {
+      await ensureAdminCandidateConversation(session.uid, session.displayName);
+      const companyIds = [...new Set(accepted.map((p) => p.companyId))];
+      for (const companyId of companyIds) {
+        const p = accepted.find((x) => x.companyId === companyId);
+        await ensureCandidateCompanyConversation(session.uid, companyId, { missionTitle: p.missionTitle });
+      }
+    } else if (session.role === 'company') {
+      await ensureAdminCompanyConversation(session.uid, session.displayName);
+      const candidateIds = [...new Set(accepted.map((p) => p.candidateId))];
+      for (const candidateId of candidateIds) {
+        const p = accepted.find((x) => x.candidateId === candidateId);
+        await ensureCandidateCompanyConversation(candidateId, session.uid, { candidateName: p.anonymousName, missionTitle: p.missionTitle });
+      }
+    }
+  } catch (error) { toast(errorMessage(error), true); }
+  if (state.chat.token !== token) return;
+  state.chat.loading = false;
+  state.chat.unsubConversations = subscribeConversations(session, (conversations) => {
+    state.chat.conversations = conversations;
+    if (!state.chat.activeId && conversations.length) selectConversation(conversations[0].id);
+    else preserveChatInput(render);
+  });
+  render();
+}
+
+function leaveMessages() {
+  state.chat.unsubConversations?.();
+  state.chat.unsubMessages?.();
+  state.chat = { conversations: [], activeId: null, messages: [], unsubConversations: null, unsubMessages: null, loading: false, token: (state.chat.token || 0) + 1 };
+}
+
+function selectConversation(id) {
+  state.chat.unsubMessages?.();
+  state.chat.activeId = id;
+  const conversation = state.chat.conversations.find((c) => c.id === id);
+  if (conversation) markConversationRead(conversation, state.session).catch(() => {});
+  state.chat.unsubMessages = subscribeMessages(id, (messages) => { state.chat.messages = messages; preserveChatInput(render); });
+  render();
+}
+
+// ── Modales : placement, feuilles de temps, suivi ─────────────────────────────
+
+function confirmPlacementModal(proposal) {
+  const profile = state.workspace.profiles.find((p) => p.id === proposal.candidateId) || {};
+  const company = state.workspace.companies.find((c) => c.id === proposal.companyId) || {};
+  modal(`<div class="modal-head"><div><h2>Confirmer le placement</h2><p>${esc(profile.name || proposal.anonymousName)} · ${esc(proposal.missionTitle)}</p></div><button class="close" data-close>×</button></div>
+    <form id="placement-form" class="form-grid">
+      <div class="field"><label>Taux payé au candidat (FCFA/h)</label><input type="number" name="payRate" min="0" step="1" required></div>
+      <div class="field"><label>Taux facturé à l'entreprise (FCFA/h)</label><input type="number" name="billRate" min="0" step="1" required></div>
+      <div class="field full"><label>Date de début</label><input type="date" name="startDate" required></div>
+      <div class="modal-actions full"><button type="button" class="btn btn-light" data-close>Annuler</button><button class="btn btn-primary">Confirmer</button></div>
+    </form>`);
+  document.querySelector('#placement-form').onsubmit = async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    try {
+      await createPlacement(state.session, {
+        applicationId: proposal.applicationId || null, proposalId: proposal.id, missionId: proposal.missionId, missionTitle: proposal.missionTitle,
+        candidateId: proposal.candidateId, candidateName: profile.name || proposal.anonymousName,
+        companyId: proposal.companyId, companyName: company.companyName || proposal.companyId,
+        billRate: values.billRate, payRate: values.payRate, startDate: values.startDate
+      });
+      if (proposal.applicationId) await updateApplication(proposal.applicationId, { status: 'accepted' });
+      document.querySelector('.modal-backdrop')?.remove();
+      await refresh('Placement confirmé.');
+    } catch (error) { toast(errorMessage(error), true); }
+  };
+}
+
+function endPlacementModal(placement) {
+  modal(`<div class="modal-head"><div><h2>Clôturer le placement</h2><p>${esc(placement.candidateName)} · ${esc(placement.missionTitle)}</p></div><button class="close" data-close>×</button></div>
+    <form id="end-placement-form" class="form-grid">
+      <div class="field full"><label>Motif de fin</label><select name="endReason"><option value="completed">Mission terminée normalement</option><option value="candidate">Rompu par le candidat</option><option value="company">Rompu par l'entreprise</option><option value="other">Autre</option></select></div>
+      <div class="modal-actions full"><button type="button" class="btn btn-light" data-close>Annuler</button><button class="btn btn-primary">Clôturer</button></div>
+    </form>`);
+  document.querySelector('#end-placement-form').onsubmit = async (event) => {
+    event.preventDefault();
+    const { endReason } = Object.fromEntries(new FormData(event.currentTarget));
+    try { await endPlacement(placement.id, endReason); document.querySelector('.modal-backdrop')?.remove(); await refresh('Placement clôturé.'); }
+    catch (error) { toast(errorMessage(error), true); }
+  };
+}
+
+function followUpModal(placement) {
+  modal(`<div class="modal-head"><div><h2>Ajouter un suivi</h2><p>${esc(placement.candidateName)} · ${esc(placement.missionTitle)}</p></div><button class="close" data-close>×</button></div>
+    <form id="followup-form" class="form-grid">
+      <div class="field full"><label>Note</label><textarea name="note" required></textarea></div>
+      <div class="field"><label>Satisfaction (1 à 5)</label><input type="number" name="satisfaction" min="1" max="5"></div>
+      <div class="modal-actions full"><button type="button" class="btn btn-light" data-close>Annuler</button><button class="btn btn-primary">Enregistrer</button></div>
+    </form>`);
+  document.querySelector('#followup-form').onsubmit = async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    try { await createFollowUp(state.session, placement, values); document.querySelector('.modal-backdrop')?.remove(); await refresh('Suivi enregistré.'); }
+    catch (error) { toast(errorMessage(error), true); }
+  };
+}
+
+async function placementDetailModal(placement) {
+  const isAdmin = state.session.role === 'admin';
+  modal(`<div class="modal-head"><div><h2>${esc(placement.candidateName)}</h2><p>${esc(placement.missionTitle)} · ${esc(placement.companyName)}</p></div><button class="close" data-close>×</button></div>
+    <div class="profile-detail">
+      <div class="detail-row"><label>Statut</label><span>${esc(label(placementStatus, placement.status))}</span></div>
+      <div class="detail-row"><label>Taux facturé</label><span>${esc(placement.billRate)} FCFA/h</span></div>
+      <div class="detail-row"><label>Début</label><span>${esc(placement.startDate || '—')}</span></div>
+      <div class="detail-row"><label>Fin</label><span>${placement.endDate ? esc(placement.endDate) + ' · ' + esc(label(endReasonLabel, placement.endReason)) : '—'}</span></div>
+    </div>
+    <div class="section-label">Suivi post-placement</div>
+    <div id="followups-zone"><p class="muted-block">Chargement...</p></div>
+    ${isAdmin ? `<div class="modal-actions" style="justify-content:flex-start;margin-top:14px"><button type="button" class="btn btn-light btn-small" id="add-followup">Ajouter un suivi</button>${placement.status === 'active' ? '<button type="button" class="btn btn-light btn-small" id="end-placement">Clôturer le placement</button>' : ''}</div>` : ''}
+    <div class="modal-actions"><button type="button" class="btn btn-light" data-close>Fermer</button></div>`);
+
+  document.querySelector('#add-followup')?.addEventListener('click', () => { document.querySelector('.modal-backdrop')?.remove(); followUpModal(placement); });
+  document.querySelector('#end-placement')?.addEventListener('click', () => { document.querySelector('.modal-backdrop')?.remove(); endPlacementModal(placement); });
+
+  try {
+    const followUps = await loadFollowUps(placement.id);
+    const zone = document.querySelector('#followups-zone');
+    if (zone) zone.innerHTML = followUps.length
+      ? `<div class="doc-list">${followUps.map((f) => `<div class="doc-link doc-link-muted" style="align-items:flex-start"><span><strong>${dateText(f.createdAt)}</strong>${f.satisfaction ? ' · ' + f.satisfaction + '/5' : ''}<br>${esc(f.note)}</span></div>`).join('')}</div>`
+      : '<p class="muted-block">Aucun suivi enregistré.</p>';
+  } catch { const zone = document.querySelector('#followups-zone'); if (zone) zone.innerHTML = '<p class="muted-block">Impossible de charger le suivi.</p>'; }
+}
+
+function disputeTimesheetModal(timesheet) {
+  modal(`<div class="modal-head"><div><h2>Contester la feuille de temps</h2><p>${esc(timesheet.candidateName)} · ${esc(timesheet.periodStart)} → ${esc(timesheet.periodEnd)}</p></div><button class="close" data-close>×</button></div>
+    <form id="dispute-form" class="form-grid">
+      <div class="field full"><label>Motif</label><textarea name="companyNote" required></textarea></div>
+      <div class="modal-actions full"><button type="button" class="btn btn-light" data-close>Annuler</button><button class="btn btn-primary">Contester</button></div>
+    </form>`);
+  document.querySelector('#dispute-form').onsubmit = async (event) => {
+    event.preventDefault();
+    const { companyNote } = Object.fromEntries(new FormData(event.currentTarget));
+    try { await respondToTimesheet(timesheet.id, 'disputed', companyNote); document.querySelector('.modal-backdrop')?.remove(); await refresh('Feuille de temps contestée.'); }
+    catch (error) { toast(errorMessage(error), true); }
+  };
+}
+
+function timesheetModal(placement, existing = null) {
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const today = new Date();
+  const defaultStart = existing?.periodStart || iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7)));
+  modal(`<div class="modal-head"><div><h2>${existing ? 'Modifier la feuille de temps' : 'Nouvelle feuille de temps'}</h2><p>${esc(placement.missionTitle)}</p></div><button class="close" data-close>×</button></div>
+    <form id="timesheet-form" class="form-grid">
+      <div class="field full"><label>Semaine du (lundi)</label><input type="date" name="periodStart" value="${defaultStart}" required></div>
+      <div class="timesheet-days" id="timesheet-days"></div>
+      <div class="modal-actions full"><button type="button" class="btn btn-light" data-close>Annuler</button><button class="btn btn-primary">Enregistrer</button></div>
+    </form>`);
+
+  const daysZone = document.querySelector('#timesheet-days');
+  const startInput = document.querySelector('[name=periodStart]');
+  function renderDays() {
+    if (!startInput.value) return;
+    const start = new Date(`${startInput.value}T00:00:00`);
+    daysZone.innerHTML = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start); d.setDate(d.getDate() + i);
+      const key = iso(d);
+      const existingHours = existing?.days?.find((x) => x.date === key)?.hours ?? '';
+      return `<div class="field"><label>${d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}</label><input type="number" min="0" max="24" step="0.5" name="hours_${key}" value="${existingHours}"></div>`;
+    }).join('');
+  }
+  renderDays();
+  startInput.addEventListener('input', renderDays);
+
+  document.querySelector('#timesheet-form').onsubmit = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const periodStart = form.get('periodStart');
+    const start = new Date(`${periodStart}T00:00:00`);
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start); d.setDate(d.getDate() + i);
+      const key = iso(d);
+      return { date: key, hours: Number(form.get(`hours_${key}`)) || 0 };
+    });
+    const totalHours = days.reduce((sum, d) => sum + d.hours, 0);
+    const periodEnd = days[6].date;
+    try {
+      if (existing) await resubmitTimesheet(existing.id, { periodStart, periodEnd, days, totalHours });
+      else await submitTimesheet({
+        placementId: placement.id, candidateId: state.session.uid, candidateName: state.session.displayName,
+        companyId: placement.companyId, missionTitle: placement.missionTitle, periodStart, periodEnd, days, totalHours
+      });
+      document.querySelector('.modal-backdrop')?.remove();
+      await refresh('Feuille de temps enregistrée.');
+    } catch (error) { toast(errorMessage(error), true); }
+  };
+}
+
 function profilePage() {
   const isCandidate = state.session.role === 'candidate';
   const p = isCandidate ? state.workspace.profile || {} : state.workspace.company || {};
@@ -429,15 +810,27 @@ function render() {
   const pages = {
     dashboard, missions: missionsPage, applications: applicationsPage,
     candidates: candidatesPage, companies: companiesPage, proposals: proposalsPage,
-    interviews: interviewsPage, profile: profilePage
+    interviews: interviewsPage, profile: profilePage,
+    placements: placementsPage, facturation: facturationPage, messages: messagesPage
   };
   const content = (pages[state.page] || dashboard)();
   document.querySelector('#app').innerHTML = shell(content);
   bind();
+  const chatThread = document.querySelector('#chat-thread');
+  if (chatThread) chatThread.scrollTop = chatThread.scrollHeight;
+}
+
+async function loadAccepted(session) {
+  return session.role === 'admin' ? [] : loadAcceptedProposals(session);
 }
 
 async function refresh(message) {
-  state.workspace = await loadWorkspace(state.session);
+  const [workspace, workflowSpace, acceptedProposals] = await Promise.all([
+    loadWorkspace(state.session), loadWorkflowWorkspace(state.session), loadAccepted(state.session)
+  ]);
+  state.workspace = workspace;
+  state.workflowSpace = workflowSpace;
+  state.acceptedProposals = acceptedProposals;
   render();
   if (message) toast(message);
 }
@@ -533,8 +926,14 @@ function bind() {
     if (!email) return toast('Saisissez votre email.', true);
     try { await resetPassword(email); toast('Email de réinitialisation envoyé.'); } catch (error) { toast(errorMessage(error), true); }
   });
-  document.querySelector('#logout')?.addEventListener('click', () => logout());
-  document.querySelectorAll('[data-page]').forEach(el => el.addEventListener('click', () => { state.page = el.dataset.page; state.query = ''; state.filter = 'all'; state.sectorFilter = 'all'; render(); }));
+  document.querySelector('#logout')?.addEventListener('click', () => { leaveMessages(); logout(); });
+  document.querySelectorAll('[data-page]').forEach(el => el.addEventListener('click', () => {
+    const leavingMessages = state.page === 'messages' && el.dataset.page !== 'messages';
+    const enteringMessages = state.page !== 'messages' && el.dataset.page === 'messages';
+    if (leavingMessages) leaveMessages();
+    state.page = el.dataset.page; state.query = ''; state.filter = 'all'; state.sectorFilter = 'all'; render();
+    if (enteringMessages) enterMessages();
+  }));
   document.querySelectorAll('[data-toast]').forEach(el => el.addEventListener('click', () => toast(el.dataset.toast)));
   document.querySelectorAll('[data-legal]').forEach(el => el.addEventListener('click', () => { state.legalPage = el.dataset.legal; render(); }));
   document.querySelector('[data-legal-back]')?.addEventListener('click', () => { state.legalPage = null; render(); });
@@ -610,14 +1009,89 @@ function bind() {
       catch (cloudError) { console.warn('Cloudinary failed, fallback to Storage', cloudError); await uploadStorageDocument(file, form.get('documentType')); await refresh('Document enregistré.'); }
     } catch (error) { toast(errorMessage(error), true); button.disabled = false; }
   });
+
+  document.querySelectorAll('[data-confirm-placement]').forEach(el => el.addEventListener('click', () => {
+    const proposal = state.workspace.proposals.find(p => p.id === el.dataset.confirmPlacement);
+    if (proposal) confirmPlacementModal(proposal);
+  }));
+  document.querySelectorAll('[data-placement-detail]').forEach(el => el.addEventListener('click', () => {
+    const placement = state.workflowSpace.placements.find(p => p.id === el.dataset.placementDetail);
+    if (placement) placementDetailModal(placement);
+  }));
+  document.querySelectorAll('[data-generate-invoice]').forEach(el => el.addEventListener('click', async () => {
+    const placement = state.workflowSpace.placements.find(p => p.id === el.dataset.generateInvoice);
+    try { await generateInvoiceAndPayment(state.session, placement); await refresh('Facture et paiement générés.'); }
+    catch (error) { toast(errorMessage(error), true); }
+  }));
+  document.querySelectorAll('[data-timesheet-validate]').forEach(el => el.addEventListener('click', async () => {
+    try { await respondToTimesheet(el.dataset.timesheetValidate, 'validated'); await refresh('Feuille de temps validée.'); }
+    catch (error) { toast(errorMessage(error), true); }
+  }));
+  document.querySelectorAll('[data-timesheet-dispute]').forEach(el => el.addEventListener('click', () => {
+    const timesheet = state.workflowSpace.timesheets.find(t => t.id === el.dataset.timesheetDispute);
+    if (timesheet) disputeTimesheetModal(timesheet);
+  }));
+  document.querySelectorAll('[data-invoice-status]').forEach(el => el.addEventListener('click', async () => {
+    const [id, status] = el.dataset.invoiceStatus.split(':');
+    try { await updateInvoiceStatus(id, status); await refresh('Facture mise à jour.'); }
+    catch (error) { toast(errorMessage(error), true); }
+  }));
+  document.querySelectorAll('[data-payment-status]').forEach(el => el.addEventListener('click', async () => {
+    const [id, status] = el.dataset.paymentStatus.split(':');
+    try { await updatePaymentStatus(id, status); await refresh('Paiement mis à jour.'); }
+    catch (error) { toast(errorMessage(error), true); }
+  }));
+  document.querySelector('#facturation-tab')?.addEventListener('change', (e) => { state.facturationTab = e.target.value; render(); });
+  document.querySelector('[data-load-more-timesheets]')?.addEventListener('click', async (e) => {
+    const cursor = state.workflowSpace.pagination?.timesheets?.cursor;
+    e.currentTarget.disabled = true;
+    try {
+      const page = await loadMoreTimesheets(state.timesheetStatusFilter, cursor);
+      state.workflowSpace.timesheets = state.workflowSpace.timesheets.concat(page.timesheets);
+      state.workflowSpace.pagination.timesheets = page.pagination;
+      render();
+    } catch (error) { toast(errorMessage(error), true); e.currentTarget.disabled = false; }
+  });
+  document.querySelector('#timesheet-status-filter')?.addEventListener('change', async (e) => {
+    state.timesheetStatusFilter = e.target.value;
+    try {
+      const res = await loadTimesheetsWorkspace(state.session, e.target.value);
+      state.workflowSpace.timesheets = res.timesheets;
+      state.workflowSpace.pagination.timesheets = res.pagination;
+      render();
+    } catch (error) { toast(errorMessage(error), true); }
+  });
+  document.querySelectorAll('[data-new-timesheet]').forEach(el => el.addEventListener('click', () => {
+    const placement = state.workflowSpace.placements.find(p => p.id === el.dataset.newTimesheet);
+    if (placement) timesheetModal(placement);
+  }));
+  document.querySelectorAll('[data-edit-timesheet]').forEach(el => el.addEventListener('click', () => {
+    const timesheet = state.workflowSpace.timesheets.find(t => t.id === el.dataset.editTimesheet);
+    const placement = state.workflowSpace.placements.find(p => p.id === timesheet?.placementId);
+    if (placement) timesheetModal(placement, timesheet);
+  }));
+  document.querySelectorAll('[data-select-conversation]').forEach(el => el.addEventListener('click', () => selectConversation(el.dataset.selectConversation)));
+  document.querySelector('#chat-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const conversation = state.chat.conversations.find(c => c.id === state.chat.activeId);
+    const input = event.currentTarget.querySelector('[name=text]');
+    const text = input.value;
+    input.value = '';
+    try { await sendMessage(conversation, state.session, text); } catch (error) { toast(errorMessage(error), true); }
+  });
 }
 
 onAuthStateChanged(auth, async (user) => {
   state.loading = true; render();
-  if (!user) { state.session = null; state.loading = false; render(); return; }
+  if (!user) { leaveMessages(); state.session = null; state.loading = false; render(); return; }
   try {
     state.session = await getSessionProfile(user);
-    state.workspace = await loadWorkspace(state.session);
+    const [workspace, workflowSpace, acceptedProposals] = await Promise.all([
+      loadWorkspace(state.session), loadWorkflowWorkspace(state.session), loadAccepted(state.session)
+    ]);
+    state.workspace = workspace;
+    state.workflowSpace = workflowSpace;
+    state.acceptedProposals = acceptedProposals;
     state.page = 'dashboard';
   } catch (error) { toast(errorMessage(error), true); await logout(); }
   state.loading = false;

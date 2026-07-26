@@ -75,6 +75,100 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // OAuth tokens and temporary states are server-only. No client rule is provided.
+    match /placements/{placementId} {
+      allow read: if isAdmin()
+        || (isCandidate() && resource.data.candidateId == request.auth.uid)
+        || (isCompany() && resource.data.companyId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+
+      // Pay rate paid to the candidate: never exposed to the company, even though
+      // the company can read the placement itself (it needs the bill rate only).
+      match /private/{doc} {
+        allow read: if isAdmin()
+          || (isCandidate() && get(/databases/$(database)/documents/placements/$(placementId)).data.candidateId == request.auth.uid);
+        allow write: if isAdmin();
+      }
+    }
+
+    match /timesheets/{timesheetId} {
+      allow read: if isAdmin()
+        || (isCandidate() && resource.data.candidateId == request.auth.uid)
+        || (isCompany() && resource.data.companyId == request.auth.uid);
+      allow create: if isAdmin() || (isCandidate()
+        && request.resource.data.candidateId == request.auth.uid
+        && request.resource.data.status == 'submitted'
+        && get(/databases/$(database)/documents/placements/$(request.resource.data.placementId)).data.candidateId == request.auth.uid);
+      allow update: if isAdmin()
+        || (isCandidate() && resource.data.candidateId == request.auth.uid
+          && resource.data.status in ['submitted', 'disputed']
+          && request.resource.data.status == 'submitted'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['days', 'totalHours', 'status', 'companyNote', 'updatedAt']))
+        || (isCompany() && resource.data.companyId == request.auth.uid
+          && resource.data.status == 'submitted'
+          && request.resource.data.status in ['validated', 'disputed']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'companyNote', 'updatedAt']));
+      allow delete: if isAdmin() || (isCandidate()
+        && resource.data.candidateId == request.auth.uid
+        && resource.data.status == 'submitted');
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isAdmin()
+        || (isCompany() && resource.data.companyId == request.auth.uid && resource.data.status != 'draft');
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /candidatePayments/{paymentId} {
+      allow read: if isAdmin() || (isCandidate() && resource.data.candidateId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /followUps/{followUpId} {
+      allow read: if isAdmin()
+        || (isCandidate() && resource.data.candidateId == request.auth.uid)
+        || (isCompany() && resource.data.companyId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /conversations/{conversationId} {
+      function isConvParticipant() {
+        return isAdmin() || (signedIn()
+          && (resource.data.candidateId == request.auth.uid || resource.data.companyId == request.auth.uid));
+      }
+      function hasChatGrant(candidateId, companyId) {
+        return exists(/databases/$(database)/documents/chatGrants/$(candidateId + '_' + companyId));
+      }
+
+      allow read: if isConvParticipant();
+      allow create: if isAdmin()
+        || (isCandidate() && request.resource.data.type == 'admin-candidate'
+          && request.resource.data.candidateId == request.auth.uid)
+        || (isCompany() && request.resource.data.type == 'admin-company'
+          && request.resource.data.companyId == request.auth.uid)
+        || (isCandidate() && request.resource.data.type == 'candidate-company'
+          && request.resource.data.candidateId == request.auth.uid
+          && hasChatGrant(request.resource.data.candidateId, request.resource.data.companyId))
+        || (isCompany() && request.resource.data.type == 'candidate-company'
+          && request.resource.data.companyId == request.auth.uid
+          && hasChatGrant(request.resource.data.candidateId, request.resource.data.companyId));
+      allow update: if isConvParticipant()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage', 'lastMessageAt', 'unread', 'updatedAt']);
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        function isParentParticipant() {
+          return isAdmin() || (signedIn() && (
+            get(/databases/$(database)/documents/conversations/$(conversationId)).data.candidateId == request.auth.uid
+            || get(/databases/$(database)/documents/conversations/$(conversationId)).data.companyId == request.auth.uid
+          ));
+        }
+
+        allow read: if isParentParticipant();
+        allow create: if request.resource.data.senderId == request.auth.uid && isParentParticipant();
+        allow update, delete: if false;
+      }
+    }
+
+    // OAuth tokens, temporary states and chat grants are server-only. No client rule is provided.
   }
 }
