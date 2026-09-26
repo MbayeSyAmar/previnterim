@@ -1,0 +1,41 @@
+name: E-mails Brevo
+
+on:
+  schedule:
+    # Toutes les 5 minutes (GitHub peut décaler l'exécution de quelques minutes)
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Déclenchement manuel depuis l'onglet Actions de GitHub
+
+# Jamais deux passages en parallèle : le journal d'envoi reste cohérent.
+concurrency:
+  group: mailer
+  cancel-in-progress: false
+
+jobs:
+  mail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mailer/requirements.txt
+
+      - name: Installer les dépendances
+        run: pip install -r mailer/requirements.txt
+
+      - name: Envoyer les e-mails
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          MAIL_SENDER_EMAIL: no-replay@previmax.space
+          MAIL_SENDER_NAME: PrevInterim
+          ADMIN_EMAIL: mbaye.amar@previmax.space,samba.cisse@previmax.space,yacine.fall@previmax.space
+          APP_URL: https://gerart-6cdc1.web.app
+        run: python mailer/mailer.py

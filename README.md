@@ -56,9 +56,9 @@ Les candidats peuvent envoyer des PDF, JPG et PNG de 10 Mo maximum. Les fichiers
 
 ## E-mails (Brevo)
 
-Les e-mails sont envoyés par des triggers Firestore (`functions/notifications.js`), jamais depuis le navigateur. Pour chaque action, deux envois : une confirmation à l'utilisateur et un récapitulatif à l'équipe.
+Le projet est sur le plan gratuit Spark (pas de Cloud Functions). Les e-mails sont envoyés par `mailer/mailer.py`, exécuté par GitHub Actions toutes les 5 minutes (`.github/workflows/mailer.yml`). Le script lit les changements Firestore depuis son dernier passage et envoie les e-mails via l'API Brevo. La clé ne transite jamais par le navigateur.
 
-| Événement | Utilisateur | Admin |
+| Événement | Utilisateur | Admins |
 | --- | --- | --- |
 | Inscription candidat | Bienvenue | Récapitulatif du profil |
 | Inscription entreprise | Demande enregistrée | Entreprise à valider |
@@ -67,16 +67,18 @@ Les e-mails sont envoyés par des triggers Firestore (`functions/notifications.j
 | Formulaire de contact | Copie du message | Message (répondre = écrire à l'expéditeur) |
 | Statut candidature / mission / entreprise, entretien | Notification | - |
 
-Mise en service :
+Délai : 5 à 15 minutes selon la charge de GitHub Actions.
 
-1. Dans Brevo, valider le domaine ou l'adresse d'expédition (Senders, domains & dedicated IPs).
-2. Renseigner `MAIL_SENDER_EMAIL`, `MAIL_SENDER_NAME` et `ADMIN_EMAIL` dans `functions/.env`.
-3. Créer une clé API Brevo (SMTP & API > API keys), puis :
+Configuration :
 
-```bash
-firebase functions:secrets:set BREVO_API_KEY
-cd functions && npm install && cd ..
-firebase deploy --only firestore:rules,functions,hosting
-```
+- Secrets GitHub (Settings > Secrets and variables > Actions) : `BREVO_API_KEY` (clé API `xkeysib-...`, pas la clé SMTP) et `FIREBASE_SERVICE_ACCOUNT`.
+- Expéditeur, destinataires admin et URL du site : bloc `env` de `.github/workflows/mailer.yml`. L'expéditeur doit appartenir à un domaine authentifié dans Brevo (`previmax.space` l'est).
 
-Sans clé ou sans expéditeur, les fonctions journalisent un avertissement et n'envoient rien. Les envois sont visibles dans Brevo > Transactional > Logs (tags `candidature`, `admin-inscription`, etc.).
+Fonctionnement :
+
+- Le premier passage enregistre les statuts existants sans rien envoyer.
+- Un journal `serverOnlyMailLog` (inaccessible aux clients) empêche tout doublon ; un envoi en échec est réessayé au passage suivant.
+- Test sans envoi : `python mailer/mailer.py --dry-run` (avec `FIREBASE_SERVICE_ACCOUNT` ou `mailer/serviceAccount.json`).
+- Historique des envois : onglet Actions de GitHub, et Brevo > Transactionnel > Logs.
+
+GitHub désactive les workflows planifiés d'un dépôt public sans activité pendant 60 jours : il suffit alors de les réactiver depuis l'onglet Actions.
