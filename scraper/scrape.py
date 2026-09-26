@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import re
 import time
@@ -54,22 +55,18 @@ SOURCES = [
         "city": "Sénégal",
     },
     {
-        "id": "expatsn",
-        "name": "Expat.com Sénégal",
-        "urls": ["https://www.expat.com/en/jobs/africa/senegal/"],
-        "city": "Dakar",
-    },
-    {
         "id": "senjob",
         "name": "Senjob",
         "urls": ["https://senjob.com/sn/offres-d-emploi.php"],
         "city": "Sénégal",
+        "parser": "senjob",
     },
     {
         "id": "offreemploisn",
         "name": "Offre-Emploi.sn",
-        "urls": ["https://offre-emploi.sn/"],
+        "urls": ["https://offre-emploi.sn/offres-emploi", "https://offre-emploi.sn/"],
         "city": "Dakar",
+        "parser": "offreemploi",
     },
     {
         "id": "wiijob",
@@ -104,6 +101,10 @@ SOURCES = [
     },
 ]
 
+# Sources retirées : leurs missions déjà en base sont supprimées au prochain passage.
+# Expat.com : la page "jobs" ne contient que des sujets de forum, aucune offre.
+REMOVED_SOURCES = ["expatsn"]
+
 NON_SENEGAL_HINTS = [
     "bénin", "benin", "côte d'ivoire", "cote d'ivoire", "burkina", "mali",
     "niger", "togo", "guinée", "guinee", "cameroun", "gabon", "congo",
@@ -114,6 +115,51 @@ NON_SENEGAL_HINTS = [
 def is_senegal_job(job: dict) -> bool:
     text = f"{job.get('city', '')} {job.get('title', '')}".lower()
     return not any(hint in text for hint in NON_SENEGAL_HINTS)
+
+
+# Textes de navigation, de catégories ou de contenu éditorial qui ne sont pas des offres.
+NOT_A_JOB = re.compile(
+    r"aller au contenu|publier une offre|d[ée]poser (une|votre) offre|tous les secteurs|toutes les offres"
+    r"|voir (plus|tout|toutes|l'offre)|en savoir plus|lire la suite|page suivante|accueil|connexion"
+    r"|inscription|mot de passe|newsletter|cookie|politique de|mentions l[ée]gales|contactez"
+    r"|jobs default|forum|guide|visa|directory|annuaire|living in|business (ideas|opportunit)"
+    r"|^formation\b|^mod[èe]les? de cv",
+    re.I,
+)
+NAV_SYMBOLS = re.compile(r"[→←»«›‹▶►]")
+TRAILING_COUNT = re.compile(r"\s\(?\d+\)?$")  # "Ressources humaines 13" = catégorie + compteur
+
+
+def is_valid_job(job: dict, source: dict) -> bool:
+    title = (job.get("title") or "").strip()
+    if not 5 <= len(title) <= 150:
+        return False
+    squashed = re.sub(r"[\W_]+", "", title.lower())
+    if squashed in (re.sub(r"[\W_]+", "", source["name"].lower()), source["id"]):
+        return False
+    if NAV_SYMBOLS.search(title) or TRAILING_COUNT.search(title) or title.endswith("?"):
+        return False
+    return not NOT_A_JOB.search(title)
+
+
+CONTRACTS = [
+    ("CDI", r"\bcdi\b"),
+    ("CDD", r"\bcdd\b"),
+    ("Stage", r"\bstages?\b|\bstagiaire\b|\binternship\b"),
+    ("Intérim", r"int[ée]rim"),
+    ("Freelance", r"freelance|ind[ée]pendant"),
+    ("Prestation", r"prestation|consultan"),
+    ("Alternance", r"alternance|apprentissage"),
+]
+
+
+def detect_contract(*texts: str) -> str:
+    """Premier type de contrat reconnu, texte explicite d'abord. Vide si rien n'est indiqué."""
+    for text in texts:
+        for label, pattern in CONTRACTS:
+            if text and re.search(pattern, text, re.I):
+                return label
+    return ""
 
 SECTORS = {
     "BTP / Construction":        ["btp", "construct", "bâtiment", "génie civil", "travaux"],
@@ -248,17 +294,62 @@ def _dig_jobs_from_json(obj, depth: int = 0) -> list[dict]:
     return jobs
 
 
+def parse_offreemploi(soup: BeautifulSoup, source: dict) -> list[dict]:
+    jobs = []
+    for card in soup.select("a.oe-job"):
+        text = lambda sel: (card.select_one(sel).get_text(" ", strip=True) if card.select_one(sel) else "")
+        title, company, pill = text(".oe-job__title"), text(".oe-job__company"), text(".oe-pill")
+        jobs.append({
+            "title": title,
+            "city": text(".oe-job__location") or source["city"],
+            "description": f"{title}{' chez ' + company if company else ''}. Offre publiée sur {source['name']}.",
+            "contractType": detect_contract(pill, title),
+            "sourceUrl": card.get("href", ""),
+        })
+    return jobs
+
+
+def parse_senjob(soup: BeautifulSoup, source: dict) -> list[dict]:
+    jobs = []
+    for link in soup.select('a[href*="/jobseekers/"]'):
+        title_el = link.select_one(".offre_title")
+        if not title_el:
+            continue
+        title = " ".join(title_el.get_text(" ", strip=True).split())
+        row = link.find_parent("tr")
+        marker = row.select_one(".glyphicon-map-marker") if row else None
+        # Senjob tronque parfois la ville : "Dakar (seneg..." -> "Dakar"
+        city = marker.parent.get_text(" ", strip=True).split("(")[0].strip() if marker else ""
+        jobs.append({
+            "title": title,
+            "city": city or source["city"],
+            "description": f"{title}. Offre publiée sur {source['name']}.",
+            "contractType": detect_contract(title),
+            "sourceUrl": link.get("href", ""),
+        })
+    return jobs
+
+
+PARSERS = {"offreemploi": parse_offreemploi, "senjob": parse_senjob}
+
+
 def parse_jobs(html: str, source: dict, source_url: str) -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
 
-    # 1. Essai extraction JSON (SPAs)
+    # 1. Parseur dédié quand la structure du site est connue
+    if source.get("parser"):
+        jobs = PARSERS[source["parser"]](soup, source)
+        print(f"  {len(jobs)} offres trouvées via parseur dédié")
+        return jobs
+
+    # 2. Extraction JSON (SPAs), uniquement pour les sources qui l'exposent
     if source.get("json_extract"):
         jobs = extract_from_json_scripts(soup)
         if jobs:
             print(f"  {len(jobs)} offres trouvées via JSON embarqué")
             return jobs
 
-    # 2. Sélecteurs CSS courants
+    # 3. Sélecteurs CSS courants (WP Job Manager, etc.)
     for sel in [
         ".k2Item", "article.job", ".job-listing", ".job_listing",
         ".offre-emploi", ".offre", ".offer", ".job-item",
@@ -282,45 +373,23 @@ def parse_jobs(html: str, source: dict, source_url: str) -> list[dict]:
             desc = desc_el.get_text(" ", strip=True)[:400] if desc_el else ""
             city_el = item.select_one(".city,.lieu,.location,.ville,.localisation")
             city = (city_el.get_text(strip=True)[:60] if city_el else "") or source["city"]
-            contract_el = item.select_one(".contract,.contrat,.type-contrat,.type")
-            contract = contract_el.get_text(strip=True)[:30] if contract_el else "CDI"
+            contract_el = item.select_one(".job-type,.contract,.contrat,.type-contrat,.type")
+            contract_text = contract_el.get_text(strip=True)[:30] if contract_el else ""
+            link = item if item.name == "a" else item.find("a", href=True)
             jobs.append({
                 "title": title,
                 "city": city,
                 "description": desc or f"Offre disponible sur {source['name']}",
-                "contractType": contract,
+                "contractType": detect_contract(contract_text, title),
+                "sourceUrl": link.get("href", "") if link else "",
             })
         if jobs:
             print(f"  {len(jobs)} offres trouvées via sélecteur '{sel}'")
             return jobs
 
-    # 3. Essai JSON même sans flag (certains sites l'embarquent toujours)
-    jobs = extract_from_json_scripts(soup)
-    if jobs:
-        print(f"  {len(jobs)} offres trouvées via JSON embarqué (fallback)")
-        return jobs
-
-    # 4. Dernier recours : liens textuels significatifs
-    skip = re.compile(
-        r"accueil|menu|contact|login|connexion|inscription|facebook|twitter|linkedin|newsletter|cookie",
-        re.I
-    )
-    jobs = []
-    for a in soup.find_all("a", href=True):
-        text = a.get_text(" ", strip=True)
-        if 15 < len(text) < 120 and not skip.search(text):
-            jobs.append({
-                "title": text,
-                "city": source["city"],
-                "description": f"Voir l'offre sur {source['name']} : {source_url}",
-                "contractType": "CDI",
-            })
-        if len(jobs) >= 15:
-            break
-
-    if jobs:
-        print(f"  {len(jobs)} offres trouvées via liens textuels")
-    return jobs
+    # Pas de repli sur les liens de la page ni sur le JSON non ciblé :
+    # ils ne remontaient que des menus, des catégories et le nom du site.
+    return []
 
 
 def ensure_company(db, source: dict, source_url: str):
@@ -338,7 +407,7 @@ def ensure_company(db, source: dict, source_url: str):
         print(f"  Entreprise créée : scraped_{source['id']}")
 
 
-def scrape_source(db, source: dict) -> int:
+def scrape_source(db, source: dict, dry_run: bool = False) -> int:
     print(f"\n[{source['name']}]")
     if source.get("wp_ajax"):
         html = fetch_wp_ajax_jobs(source["wp_ajax"])
@@ -349,6 +418,10 @@ def scrape_source(db, source: dict) -> int:
         return 0
 
     jobs = parse_jobs(html, source, used_url)
+    valid = [j for j in jobs if is_valid_job(j, source)]
+    if len(valid) < len(jobs):
+        print(f"  {len(jobs) - len(valid)} éléments écartés (pas des offres)")
+    jobs = valid
     if source.get("senegal_only"):
         before = len(jobs)
         jobs = [j for j in jobs if is_senegal_job(j)]
@@ -357,6 +430,11 @@ def scrape_source(db, source: dict) -> int:
     if not jobs:
         print("  Aucune offre trouvée.")
         return 0
+
+    if dry_run:
+        for job in jobs:
+            print(f"   - {job['title'][:90]} | {job['city'][:30]} | {job['contractType'] or 'contrat non précisé'}")
+        return len(jobs)
 
     ensure_company(db, source, used_url)
 
@@ -373,6 +451,7 @@ def scrape_source(db, source: dict) -> int:
             continue
         db.collection("missions").add({
             **job,
+            "sourceUrl": job.get("sourceUrl") or used_url,
             "duration": "Non précisé",
             "pay": "Selon profil (FCFA)",
             "sector": detect_sector(job["title"] + " " + job["description"]),
@@ -380,7 +459,6 @@ def scrape_source(db, source: dict) -> int:
             "companyName": source["name"],
             "status": "published",
             "source": source["id"],
-            "sourceUrl": used_url,
             "scrapedAt": firestore.SERVER_TIMESTAMP,
             "createdAt": firestore.SERVER_TIMESTAMP,
             "updatedAt": firestore.SERVER_TIMESTAMP,
@@ -390,6 +468,30 @@ def scrape_source(db, source: dict) -> int:
 
     print(f"  +{added} offres ajoutées")
     return added
+
+
+def purge_invalid_jobs(db) -> int:
+    """Supprime les missions importées qui ne passent plus la validation
+    (menus, catégories, forum...) ainsi que celles des sources retirées."""
+    sources = {s["id"]: s for s in SOURCES}
+    ids = list(sources) + REMOVED_SOURCES
+    batch, count = db.batch(), 0
+    for doc in db.collection("missions").where(filter=FieldFilter("source", "in", ids)).stream():
+        data = doc.to_dict()
+        source = sources.get(data.get("source"))
+        # Pour les sources à parseur dédié, une URL égale à la page de liste
+        # signale une entrée de l'ancien repli sur les liens (menus, catégories).
+        legacy = bool(source and source.get("parser") and data.get("sourceUrl") in source["urls"])
+        if source is None or legacy or not is_valid_job(data, source):
+            batch.delete(doc.reference)
+            count += 1
+            if count % 499 == 0:
+                batch.commit()
+                batch = db.batch()
+    if count % 499:
+        batch.commit()
+    print(f"\nSupprimées : {count} fausses offres importées")
+    return count
 
 
 def clean_old_jobs(db) -> int:
@@ -412,6 +514,17 @@ def clean_old_jobs(db) -> int:
 
 
 def main():
+    # --dry-run : affiche ce qui serait importé, sans lire ni écrire dans Firestore.
+    if "--dry-run" in sys.argv:
+        total = 0
+        for source in SOURCES:
+            try:
+                total += scrape_source(None, source, dry_run=True)
+            except Exception as e:
+                print(f"  ERREUR [{source['name']}]: {e}")
+        print(f"\n=== Dry run : {total} offres valides ===")
+        return
+
     sa_env = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
     if sa_env:
         cred = credentials.Certificate(json.loads(sa_env))
@@ -436,8 +549,9 @@ def main():
             print(f"  ERREUR [{source['name']}]: {e}")
         time.sleep(2)
 
+    purged = purge_invalid_jobs(db)
     deleted = clean_old_jobs(db)
-    print(f"\n=== Scraping terminé : +{total} ajoutées, {deleted} supprimées ===")
+    print(f"\n=== Scraping terminé : +{total} ajoutées, {purged + deleted} supprimées ===")
 
 
 if __name__ == "__main__":
