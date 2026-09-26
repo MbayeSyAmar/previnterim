@@ -206,7 +206,6 @@ const logo = `<span class="logo-mark" aria-hidden="true"><svg viewBox="0 0 28 28
 const longDate = (value) => value?.toDate ? value.toDate().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
 const shortDate = (iso) => /^\d{4}-\d{2}-\d{2}$/.test(iso || '') ? iso.split('-').reverse().join('/') : (iso || '');
 const period = (start, end) => `${esc(shortDate(start))} au ${esc(shortDate(end))}`;
-const payText = (mission) => mission.pay ? esc(mission.pay) : 'Rémunération non précisée';
 const durationText = (mission) => mission.duration && !/^non pr[ée]cis[ée]e?$/i.test(mission.duration.trim()) ? `, ${esc(mission.duration)}` : '';
 const sectorTag = (mission) => mission.sector && mission.sector !== 'Autre' ? `<span class="tag">${esc(mission.sector)}</span>` : '';
 
@@ -273,7 +272,6 @@ function jobCard(mission, footAction = '') {
     <ul class="job-meta">
       <li>${icons.map}<span>${esc(mission.city || 'Lieu non précisé')}</span></li>
       <li>${icons.briefcase}<span>${esc(mission.contractType || 'Contrat non précisé')}${durationText(mission)}</span></li>
-      <li>${icons.money}<span>${payText(mission)}</span></li>
     </ul>
     <div class="job-foot"><span>${mission.createdAt ? `Publiée le ${longDate(mission.createdAt)}` : 'Publiée récemment'}</span>${footAction}</div>
   </article>`;
@@ -351,7 +349,6 @@ function jobModal(mission) {
     <ul class="job-meta job-meta-inline">
       <li>${icons.map}<span>${esc(mission.city || 'Lieu non précisé')}</span></li>
       <li>${icons.briefcase}<span>${esc(mission.contractType || 'Contrat non précisé')}${durationText(mission)}</span></li>
-      <li>${icons.money}<span>${payText(mission)}</span></li>
     </ul>
     <div class="section-label">Description du poste</div>
     <p class="job-description">${esc(mission.description || 'Description non fournie.')}</p>
@@ -684,7 +681,7 @@ function missionCard(mission) {
   if (s.role === 'admin' && mission.status === 'published') action = `<button class="btn btn-light btn-small" data-mission-status="${mission.id}:suspended">Suspendre</button>`;
   const companyLabel = s.role === 'candidate' ? 'Entreprise confidentielle' : mission.companyName;
   const scrapedBadge = mission.source ? `<span class="badge gray" style="font-size:9px">Importée</span>` : '';
-  return `<article class="mission"><div><h3>${esc(mission.title)}</h3><div class="meta"><span>${icons.building} ${esc(companyLabel)}</span><span>${icons.map} ${esc(mission.city)}</span><span>${icons.clock} ${esc(mission.contractType)} · ${esc(mission.duration)}</span><span>${icons.money} <b style="font-size:9px;font-weight:700">FCFA</b> ${esc(mission.pay)}</span>${mission.sector ? `<span class="tag">${esc(mission.sector)}</span>` : ''}</div></div><div class="mission-actions">${scrapedBadge}${badge(label(missionStatus, mission.status))}${action}</div></article>`;
+  return `<article class="mission"><div><h3>${esc(mission.title)}</h3><div class="meta"><span>${icons.building} ${esc(companyLabel)}</span><span>${icons.map} ${esc(mission.city)}</span><span>${icons.clock} ${esc(mission.contractType)} · ${esc(mission.duration)}</span>${s.role !== 'candidate' && mission.pay ? `<span>${icons.money} ${esc(mission.pay)}</span>` : ''}${mission.sector ? `<span class="tag">${esc(mission.sector)}</span>` : ''}</div></div><div class="mission-actions">${scrapedBadge}${badge(label(missionStatus, mission.status))}${action}</div></article>`;
 }
 
 function dashboard() {
@@ -1330,7 +1327,7 @@ function missionModal() {
       <div class="field"><label>Ville</label><input name="city" required></div>
       <div class="field"><label>Type de contrat</label><select name="contractType"><option>Intérim</option><option>CDD</option><option>CDI intérimaire</option></select></div>
       <div class="field"><label>Durée</label><input name="duration" required placeholder="3 mois"></div>
-      <div class="field"><label>Rémunération</label><input name="pay" required placeholder="500 FCFA/h"></div>
+      <div class="field"><label for="m-pay">Rémunération</label><input id="m-pay" name="pay" required placeholder="500 FCFA/h"><small class="hint">Visible uniquement par l'équipe Interim, jamais par les candidats.</small></div>
       <div class="field full"><label>Description du poste</label><textarea name="description" required></textarea></div>
       <div class="modal-actions full"><button type="button" class="btn btn-light" data-close>Annuler</button><button class="btn btn-primary">Enregistrer</button></div>
     </form>`);

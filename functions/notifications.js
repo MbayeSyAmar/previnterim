@@ -178,8 +178,12 @@ exports.onMissionCreated = onDocumentCreated(options('missions/{id}'), handle(as
   const mission = event.data.data();
   // Only company submissions need a round trip; admin-created and imported missions are published directly.
   if (isScraped(mission.companyId, mission) || mission.status !== 'pending') return;
-  const user = await contactOf(mission.companyId);
-  const rows = [['Poste', mission.title], ['Secteur', mission.sector], ['Lieu', mission.city], ['Contrat', mission.contractType], ['Durée', mission.duration], ['Rémunération', mission.pay]];
+  const [user, terms] = await Promise.all([
+    contactOf(mission.companyId),
+    db().doc(`missions/${event.params.id}/private/terms`).get()
+  ]);
+  const pay = terms.exists ? terms.data().pay : '';
+  const rows = [['Poste', mission.title], ['Secteur', mission.sector], ['Lieu', mission.city], ['Contrat', mission.contractType], ['Durée', mission.duration], ['Rémunération', pay]];
   await sendPair(
     {
       to: user.email, toName: mission.companyName, tag: 'mission',

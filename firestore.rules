@@ -33,16 +33,27 @@ service cloud.firestore {
       allow read: if isAdmin()
         || resource.data.status == 'published'
         || (isCompany() && resource.data.companyId == request.auth.uid);
-      allow create: if isAdmin() || (isCompany()
+      // The pay never goes in the public mission document: see private/terms below.
+      allow create: if !('pay' in request.resource.data) && (isAdmin() || (isCompany()
         && userData().status == 'active'
         && request.resource.data.companyId == request.auth.uid
-        && request.resource.data.status == 'pending');
-      allow update: if isAdmin() || (isCompany()
+        && request.resource.data.status == 'pending'));
+      allow update: if request.resource.data.get('pay', null) == resource.data.get('pay', null)
+        && (isAdmin() || (isCompany()
         && resource.data.companyId == request.auth.uid
         && request.resource.data.companyId == request.auth.uid
-        && request.resource.data.status == resource.data.status);
+        && request.resource.data.status == resource.data.status));
       allow delete: if isAdmin() || (isCompany()
         && resource.data.companyId == request.auth.uid);
+
+      // Pay offered by the company: hidden from candidates and from the public board.
+      match /private/{docId} {
+        allow read: if isAdmin() || (isCompany()
+          && get(/databases/$(database)/documents/missions/$(missionId)).data.companyId == request.auth.uid);
+        allow create, update: if isAdmin() || (isCompany()
+          && getAfter(/databases/$(database)/documents/missions/$(missionId)).data.companyId == request.auth.uid);
+        allow delete: if isAdmin();
+      }
     }
 
     match /applications/{applicationId} {

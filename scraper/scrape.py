@@ -453,7 +453,6 @@ def scrape_source(db, source: dict, dry_run: bool = False) -> int:
             **job,
             "sourceUrl": job.get("sourceUrl") or used_url,
             "duration": "Non précisé",
-            "pay": "Selon profil (FCFA)",
             "sector": detect_sector(job["title"] + " " + job["description"]),
             "companyId": f"scraped_{source['id']}",
             "companyName": source["name"],
@@ -491,6 +490,27 @@ def purge_invalid_jobs(db) -> int:
     if count % 499:
         batch.commit()
     print(f"\nSupprimées : {count} fausses offres importées")
+    return count
+
+
+def migrate_public_pay(db) -> int:
+    """Retire le champ "pay" des documents missions, lisibles publiquement.
+    Pour une mission publiée par une entreprise, le salaire est d'abord copié
+    dans missions/{id}/private/terms (lecture réservée à l'admin et à l'entreprise).
+    Idempotent : une fois la migration faite, la requête ne renvoie plus rien."""
+    count = 0
+    for doc in db.collection("missions").order_by("pay").stream():
+        data = doc.to_dict()
+        batch = db.batch()
+        if not data.get("source"):
+            terms = doc.reference.collection("private").document("terms")
+            if not terms.get().exists:
+                batch.set(terms, {"pay": data.get("pay") or "", "updatedAt": firestore.SERVER_TIMESTAMP})
+        batch.update(doc.reference, {"pay": firestore.DELETE_FIELD})
+        batch.commit()
+        count += 1
+    if count:
+        print(f"\nSalaire retiré de {count} missions publiques")
     return count
 
 
@@ -549,6 +569,7 @@ def main():
             print(f"  ERREUR [{source['name']}]: {e}")
         time.sleep(2)
 
+    migrate_public_pay(db)
     purged = purge_invalid_jobs(db)
     deleted = clean_old_jobs(db)
     print(f"\n=== Scraping terminé : +{total} ajoutées, {purged + deleted} supprimées ===")

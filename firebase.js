@@ -27,7 +27,8 @@ import {
   setDoc,
   startAfter,
   updateDoc,
-  where
+  where,
+  writeBatch
 } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-storage.js';
 
@@ -251,7 +252,7 @@ async function loadWorkspace(session) {
       getDocs(query(collection(db, 'proposals'), where('companyId', '==', session.uid))),
       getDoc(doc(db, 'companies', session.uid))
     ]);
-    result.missions = rows(missions);
+    result.missions = await withPrivateTerms(rows(missions));
     result.proposals = rows(proposals);
     result.company = company.exists() ? company.data() : {};
   } else if (session.role === 'admin') {
@@ -264,7 +265,7 @@ async function loadWorkspace(session) {
       getDocs(query(collection(db, 'interviews'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE)))
     ]);
     Object.assign(result, {
-      missions: rows(missions), applications: rows(applications), profiles: rows(profiles),
+      missions: await withPrivateTerms(rows(missions)), applications: rows(applications), profiles: rows(profiles),
       companies: rows(companies), proposals: rows(proposals), interviews: rows(interviews)
     });
     result.pagination = {
@@ -319,22 +320,40 @@ async function loadMorePage(session, kind, cursor) {
   const builder = MORE_PAGE_QUERIES[session.role]?.[kind];
   if (!builder) throw new Error('Pagination non disponible pour cette liste.');
   const snapshot = await getDocs(builder(cursor));
-  return { rows: rows(snapshot), ...pageInfo(snapshot) };
+  const list = kind === 'missions' && session.role === 'admin' ? await withPrivateTerms(rows(snapshot)) : rows(snapshot);
+  return { rows: list, ...pageInfo(snapshot) };
 }
 
-function createMission(session, values) {
+// Mission documents are publicly readable (job board), so the pay offered by the
+// company lives in missions/{id}/private/terms, readable by admin and owner only.
+async function createMission(session, values) {
   if (!['company', 'admin'].includes(session.role)) throw new Error('Action non autorisée.');
   if (session.role === 'company' && session.status !== 'active') {
     throw new Error('Votre entreprise doit être validée avant de créer une mission.');
   }
-  return addDoc(collection(db, 'missions'), {
-    ...values,
+  const { pay, ...publicValues } = values;
+  const missionRef = doc(collection(db, 'missions'));
+  const batch = writeBatch(db);
+  batch.set(missionRef, {
+    ...publicValues,
     companyId: session.role === 'company' ? session.uid : values.companyId || session.uid,
     companyName: values.companyName || session.displayName,
     status: session.role === 'admin' ? 'published' : 'pending',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
+  batch.set(doc(db, 'missions', missionRef.id, 'private', 'terms'), { pay: pay || '', updatedAt: serverTimestamp() });
+  await batch.commit();
+  return missionRef;
+}
+
+// Adds the private pay to missions for the admin and the owning company.
+// Imported missions never have private terms, so they are skipped.
+async function withPrivateTerms(missions) {
+  const terms = await Promise.all(missions.map((m) => m.source
+    ? null
+    : getDoc(doc(db, 'missions', m.id, 'private', 'terms')).then((s) => (s.exists() ? s.data() : null)).catch(() => null)));
+  return missions.map((m, i) => (terms[i] ? { ...m, pay: terms[i].pay } : m));
 }
 
 function applyToMission(session, mission) {
