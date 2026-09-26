@@ -149,3 +149,6 @@ exports.api = onRequest({ region: 'europe-west1', secrets: [driveClientSecret], 
     return json(res, error.status || 500, { error: error.message || 'Erreur serveur.' });
   }
 });
+
+// Brevo email notifications (Firestore triggers).
+Object.assign(exports, require('./notifications'));

@@ -192,6 +192,21 @@ service cloud.firestore {
       }
     }
 
-    // OAuth tokens and temporary states are server-only. No client rule is provided.
+    // Public contact form. Anyone can submit, nobody but the admin can read it back.
+    // The Brevo emails are sent by the onContactMessage trigger.
+    match /contactMessages/{messageId} {
+      allow create: if request.resource.data.keys().hasOnly(['name', 'email', 'phone', 'topic', 'subject', 'message', 'uid', 'createdAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() > 1 && request.resource.data.name.size() <= 120
+        && request.resource.data.email is string && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$') && request.resource.data.email.size() <= 200
+        && request.resource.data.phone is string && request.resource.data.phone.size() <= 40
+        && request.resource.data.topic in ['candidate', 'company', 'other']
+        && request.resource.data.subject is string && request.resource.data.subject.size() > 2 && request.resource.data.subject.size() <= 150
+        && request.resource.data.message is string && request.resource.data.message.size() >= 10 && request.resource.data.message.size() <= 4000
+        && request.resource.data.uid == (request.auth == null ? null : request.auth.uid)
+        && request.resource.data.createdAt == request.time;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // OAuth tokens, temporary states and the mail log are server-only. No client rule is provided.
   }
 }

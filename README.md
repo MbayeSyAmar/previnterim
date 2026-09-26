@@ -6,7 +6,7 @@ SPA Firebase pour la gestion de missions, candidatures, entretiens et présentat
 
 Dans la console Firebase du projet `gerart-6cdc1` :
 
-1. Authentication > Sign-in method : activer **Email/Password**.
+1. Authentication > Sign-in method : activer **Email/Password** et **Google** (renseigner l'e-mail d'assistance du projet). Vérifier que `gerart-6cdc1.web.app` figure dans Authentication > Settings > Authorized domains.
 2. Firestore Database : créer la base en mode production.
 3. Storage : créer le bucket si un stockage Firebase de secours est souhaité.
 4. Installer Firebase CLI, se connecter, puis exécuter à la racine :
@@ -53,3 +53,30 @@ Cette opération doit être faite directement dans la console Firebase, jamais d
 ## Documents
 
 Les candidats peuvent envoyer des PDF, JPG et PNG de 10 Mo maximum. Les fichiers sont déposés par une Cloud Function authentifiée ; le navigateur ne reçoit ni secret OAuth ni jeton Drive.
+
+## E-mails (Brevo)
+
+Les e-mails sont envoyés par des triggers Firestore (`functions/notifications.js`), jamais depuis le navigateur. Pour chaque action, deux envois : une confirmation à l'utilisateur et un récapitulatif à l'équipe.
+
+| Événement | Utilisateur | Admin |
+| --- | --- | --- |
+| Inscription candidat | Bienvenue | Récapitulatif du profil |
+| Inscription entreprise | Demande enregistrée | Entreprise à valider |
+| Candidature | Candidature enregistrée | Nouvelle candidature |
+| Mission soumise par une entreprise | Mission reçue | Mission à valider |
+| Formulaire de contact | Copie du message | Message (répondre = écrire à l'expéditeur) |
+| Statut candidature / mission / entreprise, entretien | Notification | - |
+
+Mise en service :
+
+1. Dans Brevo, valider le domaine ou l'adresse d'expédition (Senders, domains & dedicated IPs).
+2. Renseigner `MAIL_SENDER_EMAIL`, `MAIL_SENDER_NAME` et `ADMIN_EMAIL` dans `functions/.env`.
+3. Créer une clé API Brevo (SMTP & API > API keys), puis :
+
+```bash
+firebase functions:secrets:set BREVO_API_KEY
+cd functions && npm install && cd ..
+firebase deploy --only firestore:rules,functions,hosting
+```
+
+Sans clé ou sans expéditeur, les fonctions journalisent un avertissement et n'envoient rien. Les envois sont visibles dans Brevo > Transactional > Logs (tags `candidature`, `admin-inscription`, etc.).

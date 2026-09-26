@@ -1,16 +1,22 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js';
 import {
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
   getAuth,
+  GoogleAuthProvider,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  setPersistence,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
   signOut
 } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js';
 import {
   addDoc,
   collection,
   doc,
+  getCountFromServer,
   getDoc,
   getDocs,
   getFirestore,
@@ -38,29 +44,25 @@ const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
 const storage = getStorage(firebaseApp);
+// Keep the session across browser restarts until an explicit sign-out.
+setPersistence(auth, browserLocalPersistence).catch(() => {});
 // Cloudinary configuration - set these values for unsigned uploads
 const CLOUDINARY_CLOUD_NAME = 'dqe7z0kdx';
 // Default unsigned preset name. Create this preset in your Cloudinary dashboard
 // or use the curl command shown after applying these changes.
 const CLOUDINARY_UPLOAD_PRESET = 'unsigned_previnterim';
 const apiBaseUrl = 'https://europe-west1-gerart-6cdc1.cloudfunctions.net/api';
-// Notifications email via EmailJS (gratuit, 100% côté client, aucune Cloud Function requise).
-// Créez un compte sur emailjs.com, un service, un template avec les variables
-// to_email / to_name / subject / message, puis renseignez les 3 valeurs ci-dessous.
-const EMAILJS_SERVICE_ID = 'service_kwc6nqj';
-const EMAILJS_TEMPLATE_ID = 'template_hg6328t';
-const EMAILJS_PUBLIC_KEY = 'xcYCxu3DUtslaUtp1';
-
 const rows = (snapshot) => snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
 
-async function register({ email, password, role, name, phone, city, companyName, siret }) {
+// Writes the Firestore profile of a freshly authenticated user. Shared by the
+// email/password sign-up and by the first Google sign-in.
+async function createAccountProfile(user, { role, name, phone, city, companyName, siret }) {
   if (!['candidate', 'company'].includes(role)) throw new Error('Rôle non autorisé.');
-  const credential = await createUserWithEmailAndPassword(auth, email, password);
-  const uid = credential.user.uid;
+  const uid = user.uid;
   const displayName = role === 'company' ? companyName : name;
 
   await setDoc(doc(db, 'users', uid), {
-    email,
+    email: user.email,
     role,
     displayName,
     status: role === 'company' ? 'pending' : 'active',
@@ -89,8 +91,25 @@ async function register({ email, password, role, name, phone, city, companyName,
       updatedAt: serverTimestamp()
     });
   }
+}
 
+async function register({ email, password, ...profile }) {
+  if (!['candidate', 'company'].includes(profile.role)) throw new Error('Rôle non autorisé.');
+  const credential = await createUserWithEmailAndPassword(auth, email, password);
+  await createAccountProfile(credential.user, profile);
   return credential.user;
+}
+
+async function signInWithGoogle() {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try {
+    return await signInWithPopup(auth, provider);
+  } catch (error) {
+    // Some mobile browsers block popups: fall back to a full-page redirect.
+    if (error.code === 'auth/popup-blocked') return signInWithRedirect(auth, provider);
+    throw error;
+  }
 }
 
 const login = (email, password) => signInWithEmailAndPassword(auth, email, password);
@@ -196,31 +215,12 @@ async function uploadCloudinaryDocument(file, documentType, candidateId = '') {
   return { id: documentRef.id, name: document.name, documentType: document.documentType };
 }
 
+// Returns null when the account exists in Firebase Auth but has no profile yet
+// (first Google sign-in): the app then asks the user to finish signing up.
 async function getSessionProfile(user) {
   const snapshot = await getDoc(doc(db, 'users', user.uid));
-  if (!snapshot.exists()) throw new Error('Profil utilisateur introuvable.');
+  if (!snapshot.exists()) return null;
   return { uid: user.uid, email: user.email, ...snapshot.data() };
-}
-
-async function notifyByEmail(uid, subject, message) {
-  if (!uid || uid.startsWith('scraped_') || EMAILJS_PUBLIC_KEY.startsWith('YOUR_')) return;
-  try {
-    const userDoc = await getDoc(doc(db, 'users', uid));
-    if (!userDoc.exists() || !userDoc.data().email) return;
-    const { email, displayName } = userDoc.data();
-    await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        service_id: EMAILJS_SERVICE_ID,
-        template_id: EMAILJS_TEMPLATE_ID,
-        user_id: EMAILJS_PUBLIC_KEY,
-        template_params: { to_email: email, to_name: displayName || '', subject, message }
-      })
-    });
-  } catch {
-    // Notification best-effort : un échec d'envoi ne doit jamais bloquer l'action principale.
-  }
 }
 
 const PAGE_SIZE = 40;
@@ -279,6 +279,21 @@ async function loadWorkspace(session) {
 async function loadPublicMissions() {
   const snap = await getDocs(query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE)));
   return { missions: rows(snap), pagination: pageInfo(snap) };
+}
+
+async function countPublishedMissions() {
+  const snap = await getCountFromServer(query(collection(db, 'missions'), where('status', '==', 'published')));
+  return snap.data().count;
+}
+
+// Public contact form. Emails to the sender and to the admin are sent by a Cloud Function trigger.
+function submitContactMessage({ name, email, phone, topic, subject, message }) {
+  return addDoc(collection(db, 'contactMessages'), {
+    name: name.trim(), email: email.trim(), phone: (phone || '').trim(), topic,
+    subject: subject.trim(), message: message.trim(),
+    uid: auth.currentUser?.uid || null,
+    createdAt: serverTimestamp()
+  });
 }
 
 async function loadMorePublicMissions(cursor) {
@@ -395,10 +410,11 @@ async function getDocumentsForCandidate(candidateId) {
 }
 
 export {
-  applyToMission, auth, createInterview, createMission, createProposal, db, firebaseApp,
+  applyToMission, auth, countPublishedMissions, createAccountProfile, createInterview, createMission, createProposal, db, firebaseApp,
   connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals,
-  loadMorePage, loadMorePublicMissions, loadPublicMissions, loadWorkspace, login, logout, notifyByEmail,
+  loadMorePage, loadMorePublicMissions, loadPublicMissions, loadWorkspace, login, logout,
   onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile, saveCompanyProfile,
+  signInWithGoogle, submitContactMessage,
   storage, triggerScrape, updateApplication,
   updateCompanyStatus, updateMissionStatus, uploadDriveDocument, uploadStorageDocument,
   uploadCloudinaryDocument
