@@ -6,7 +6,8 @@
     "public": ".",
     "ignore": [
       "firebase.json", "**/.*", "**/node_modules/**", "functions/**", "firestore.rules", "firestore.indexes.json", "storage.rules", "README.md",
-      "BonCoin_Front/**", "bonCoin_backend/**", "business_brief.html", "logo.html", "BonCoin.code-workspace"
+      "BonCoin_Front/**", "bonCoin_backend/**", "business_brief.html", "logo.html", "BonCoin.code-workspace",
+      "scraper/**", "mailer/**", "**/serviceAccount.json", "**/__pycache__/**"
     ],
     "rewrites": [
       { "source": "/api/**", "function": { "functionId": "api", "region": "europe-west1" } },
