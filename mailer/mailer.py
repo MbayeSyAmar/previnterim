@@ -76,7 +76,7 @@ def layout(title, intro, rows=(), cta=None) -> str:
 <body style="margin:0;padding:0;background:#f5f7f5;font-family:Arial,Helvetica,sans-serif;color:#1b2521">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f7f5;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid #e2e7e4">
-<tr><td style="background:#123d30;padding:18px 28px;color:#ffffff;font-size:20px;font-weight:700">{esc(SENDER_NAME)}</td></tr>
+<tr><td style="background:#ffffff;padding:18px 28px;border-bottom:3px solid #1f6b52"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="width:32px;height:32px;background:#1f6b52;border-radius:8px;color:#eef8f2;font-family:Manrope,Arial,sans-serif;font-weight:800;font-size:16px;text-align:center;vertical-align:middle">I</td><td style="padding-left:10px;font-family:Manrope,Arial,sans-serif;font-weight:800;font-size:20px;color:#17201d">Interim.</td></tr></table></td></tr>
 <tr><td style="padding:28px"><h1 style="margin:0 0 12px;font-size:20px;color:#123d30">{esc(title)}</h1>
 <p style="margin:0;font-size:15px;line-height:1.6">{intro}</p>{table}{button}</td></tr>
 <tr><td style="padding:16px 28px;border-top:1px solid #e2e7e4;color:#5c6863;font-size:12px;line-height:1.5">Cet e-mail est envoyé automatiquement par la plateforme {esc(SENDER_NAME)}. {site}</td></tr>

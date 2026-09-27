@@ -201,7 +201,7 @@ function loadMoreButton(kind, label = 'Charger plus') {
 
 const INFO_PAGES = ['contact', 'mentions', 'privacy', 'terms'];
 
-const logo = `<span class="logo-mark" aria-hidden="true"><svg viewBox="0 0 28 28" width="28" height="28"><rect width="28" height="28" rx="6" fill="currentColor"/><circle cx="14" cy="8" r="2.4" fill="#fff"/><rect x="11.8" y="12" width="4.4" height="10" rx="1.2" fill="#fff"/></svg></span><span class="logo-text">interim</span>`;
+const logo = `<span class="logo-mark" aria-hidden="true">I</span><span class="logo-text">Interim.</span>`;
 
 const longDate = (value) => value?.toDate ? value.toDate().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
 const shortDate = (iso) => /^\d{4}-\d{2}-\d{2}$/.test(iso || '') ? iso.split('-').reverse().join('/') : (iso || '');

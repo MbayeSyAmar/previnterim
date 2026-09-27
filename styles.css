@@ -43,8 +43,10 @@ svg { flex-shrink: 0; }
 .full { grid-column: 1 / -1; }
 
 /* ── Logo ── */
-.logo { display: inline-flex; align-items: center; gap: 9px; color: var(--primary); }
-.logo-text { font-size: 24px; font-weight: 600; letter-spacing: -.03em; color: var(--primary); line-height: 1; }
+/* Logo officiel : carré vert avec « I », puis « Interim. » (Manrope 800) */
+.logo { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: "Manrope", var(--font); font-weight: 800; }
+.logo-mark { width: 32px; height: 32px; border-radius: 8px; background: var(--primary); color: #eef8f2; display: grid; place-items: center; font-size: 16px; line-height: 1; }
+.logo-text { font-size: 21px; letter-spacing: -.01em; color: #17201d; line-height: 1; }
 
 /* ── Buttons ── */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 0 18px; border-radius: var(--radius); border: 1px solid transparent; font-weight: 500; font-size: 15px; line-height: 1; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s; }
@@ -226,7 +228,8 @@ svg { flex-shrink: 0; }
 /* ── App shell (signed in) ── */
 .app-header { background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
 .app-header-inner { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; }
-.app-header .logo-text { font-size: 22px; }
+.app-header .logo-text { font-size: 20px; }
+.app-header .logo-mark { width: 30px; height: 30px; font-size: 15px; }
 .app-header-actions { display: flex; align-items: center; gap: 20px; }
 .header-link { font-size: 14px; color: var(--muted); }
 .header-link:hover { color: var(--primary); }
