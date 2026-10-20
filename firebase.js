@@ -277,14 +277,52 @@ async function loadWorkspace(session) {
 }
 
 // Public job board: no auth required, only ever the published missions.
-async function loadPublicMissions() {
-  const snap = await getDocs(query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE)));
+//
+// Le secteur est filtre par Firestore, pas dans le navigateur. Le filtrage cote
+// client ne voyait que la page chargee : avec 159 offres publiees et une page de
+// 40, choisir un secteur dont les offres se trouvaient plus bas affichait
+// « aucune offre » alors que la base en contenait. Les autres filtres (mot-cle,
+// ville, contrat) restent cote client, faute de requete equivalente.
+//
+// La requete triee exige l'index compose (status, sector, createdAt) declare
+// dans firestore.indexes.json. La requete de comptage, elle, n'a que des
+// egalites et se contente des index a champ unique.
+const publicMissionsQuery = (sector, cursor) => query(
+  collection(db, 'missions'),
+  where('status', '==', 'published'),
+  ...(sector && sector !== 'all' ? [where('sector', '==', sector)] : []),
+  orderBy('createdAt', 'desc'),
+  ...(cursor ? [startAfter(cursor)] : []),
+  limit(PAGE_SIZE)
+);
+
+const publicCountQuery = (sector) => query(
+  collection(db, 'missions'),
+  where('status', '==', 'published'),
+  ...(sector && sector !== 'all' ? [where('sector', '==', sector)] : [])
+);
+
+async function loadPublicMissions(sector) {
+  const snap = await getDocs(publicMissionsQuery(sector));
   return { missions: rows(snap), pagination: pageInfo(snap) };
 }
 
-async function countPublishedMissions() {
-  const snap = await getCountFromServer(query(collection(db, 'missions'), where('status', '==', 'published')));
+// Le `limit` de la requete d'affichage plafonnerait le comptage a une page,
+// d'ou une requete distincte sans limite.
+async function countPublishedMissions(sector) {
+  const snap = await getCountFromServer(publicCountQuery(sector));
   return snap.data().count;
+}
+
+// Compte reel par secteur, pour que « Parcourir les offres par secteur »
+// annonce ce que contient la base et non ce qu'il y a dans la page chargee.
+// Un comptage Firestore est facturé un acces par millier de documents, donc
+// quatorze comptages restent moins chers qu'une seule page de resultats.
+async function countPublishedBySector(sectors) {
+  const counts = await Promise.all(sectors.map((s) => getCountFromServer(publicCountQuery(s))
+    .then((snap) => snap.data().count)
+    .catch(() => 0)));
+  return Object.fromEntries(sectors.map((s, i) => [s, counts[i]]));
 }
 
 // Public contact form. Emails to the sender and to the admin are sent by a Cloud Function trigger.
@@ -297,8 +335,8 @@ function submitContactMessage({ name, email, phone, topic, subject, message }) {
   });
 }
 
-async function loadMorePublicMissions(cursor) {
-  const snap = await getDocs(query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE)));
+async function loadMorePublicMissions(cursor, sector) {
+  const snap = await getDocs(publicMissionsQuery(sector, cursor));
   return { rows: rows(snap), ...pageInfo(snap) };
 }
 
@@ -429,7 +467,7 @@ async function getDocumentsForCandidate(candidateId) {
 }
 
 export {
-  applyToMission, auth, countPublishedMissions, createAccountProfile, createInterview, createMission, createProposal, db, firebaseApp,
+  applyToMission, auth, countPublishedBySector, countPublishedMissions, createAccountProfile, createInterview, createMission, createProposal, db, firebaseApp,
   connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals,
   loadMorePage, loadMorePublicMissions, loadPublicMissions, loadWorkspace, login, logout,
   onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile, saveCompanyProfile,

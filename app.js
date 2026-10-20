@@ -1,7 +1,7 @@
 ﻿import {
   applyToMission, auth, countPublishedMissions, createAccountProfile, createInterview, createMission, createProposal,
   getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals, loadMorePage, loadMorePublicMissions,
-  loadPublicMissions, loadWorkspace, login, logout,
+  countPublishedBySector, loadPublicMissions, loadWorkspace, login, logout,
   onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile,
   saveCompanyProfile, signInWithGoogle, submitContactMessage, updateApplication, updateCompanyStatus, updateMissionStatus,
   uploadStorageDocument, uploadCloudinaryDocument
@@ -42,11 +42,16 @@ const icons = {
 
 const SCRAPE_TTL_DAYS = 5;
 
+// Les libelles sont partages avec scraper/scrape.py, qui ecrit le champ
+// `sector` des offres importees. Les deux listes doivent rester identiques :
+// un libelle present d'un seul cote donne des offres que le filtre ne peut
+// pas atteindre, ce qui etait le cas de cinq secteurs sur onze.
 const SECTORS = [
   'BTP / Construction', 'Transport / Logistique', 'Industrie / Production',
-  'Tertiaire / Commerce', 'Santé / Social', 'Informatique / Numérique',
-  'Hôtellerie / Restauration', 'Agriculture / Agroalimentaire',
-  'Éducation / Formation', 'Finance / Comptabilité', 'Autre'
+  'Hôtellerie / Restauration', 'Nettoyage / Services', 'Sécurité / Gardiennage',
+  'Commerce / Vente', 'Santé / Social', 'Informatique / Tech',
+  'Administration / RH', 'Finance / Comptabilité', 'Agriculture / Élevage',
+  'Enseignement / Formation', 'Autre'
 ];
 
 const DOC_TYPES = { cv: 'CV', identity: "Pièce d'identité", certificate: 'Certificat / diplôme', other: 'Autre document' };
@@ -61,7 +66,8 @@ const state = {
   page: 'dashboard', query: '', filter: 'all', sectorFilter: 'all', authMode: 'login', loading: true, driveConnected: null,
   infoPage: null, authRole: 'candidate', onboardingUser: null, registering: false, contactSent: null,
   guestPage: 'missions', publicMissions: [], publicPagination: {}, publicTotal: null,
-  publicQuery: '', publicCity: '', publicSector: 'all', publicContract: 'all', pendingApplyMissionId: null
+  publicQuery: '', publicCity: '', publicSector: 'all', publicContract: 'all', pendingApplyMissionId: null,
+  sectorCounts: {}, sectorLoading: false
 };
 
 const LEGAL_CONTENT = {
@@ -69,9 +75,7 @@ const LEGAL_CONTENT = {
     title: 'Mentions légales',
     body: `
       <h2>Éditeur du site</h2>
-      <p>Le site Interim est édité par <strong>[Raison sociale / nom de l'auto-entrepreneur à compléter]</strong>, immatriculé sous le numéro NINEA/RCCM <strong>[à compléter]</strong>, dont le siège est situé <strong>[adresse à compléter, Sénégal]</strong>. Contact : <strong>[email de contact à compléter]</strong>.</p>
-      <h2>Directeur de la publication</h2>
-      <p><strong>[Nom du responsable à compléter]</strong>.</p>
+      <p>Le site Interim est édité par <strong>Previmax - Group</strong>, immatriculé sous le numéro NINEA <strong>013340138</strong>, dont le siège est situé à <strong>Dakar, Keur Massar, Sénégal</strong>. Contact : <strong>yacine.fall@previmax.space</strong>.</p>
       <h2>Hébergement</h2>
       <p>Le site est hébergé par Google Ireland Limited (Firebase Hosting), Gordon House, Barrow Street, Dublin 4, Irlande. Les documents candidats sont hébergés par Cloudinary Ltd. Les e-mails transactionnels sont envoyés par Brevo (Sendinblue SAS), 106 boulevard Haussmann, 75008 Paris, France.</p>
       <h2>Propriété intellectuelle</h2>
@@ -81,7 +85,7 @@ const LEGAL_CONTENT = {
     title: 'Politique de confidentialité',
     body: `
       <h2>Responsable du traitement</h2>
-      <p><strong>[Raison sociale à compléter]</strong> est responsable du traitement des données personnelles collectées sur cette plateforme.</p>
+      <p><strong>Previmax - Group</strong> (NINEA 013340138), dont le siège est situé à Dakar, Keur Massar, Sénégal, est responsable du traitement des données personnelles collectées sur cette plateforme.</p>
       <h2>Données collectées</h2>
       <p>Selon votre profil : identité et coordonnées (nom, téléphone, ville, email), informations professionnelles (compétences, expérience, disponibilité), documents (CV, pièce d'identité, certificats), informations sur l'entreprise (raison sociale, SIRET, contact).</p>
       <h2>Finalités</h2>
@@ -91,7 +95,7 @@ const LEGAL_CONTENT = {
       <h2>Durée de conservation</h2>
       <p>Vos données sont conservées le temps de votre inscription sur la plateforme, puis archivées ou supprimées conformément à la réglementation applicable après clôture du compte.</p>
       <h2>Vos droits</h2>
-      <p>Vous disposez d'un droit d'accès, de rectification, de suppression et d'opposition sur vos données personnelles. Pour l'exercer, contactez <strong>[email de contact à compléter]</strong>.</p>
+      <p>Vous disposez d'un droit d'accès, de rectification, de suppression et d'opposition sur vos données personnelles. Pour l'exercer, contactez <strong>yacine.fall@previmax.space</strong>.</p>
       <h2>Cookies et stockage local</h2>
       <p>Le site utilise uniquement le stockage nécessaire à l'authentification (session Firebase Auth). Aucun cookie publicitaire ou de traçage tiers n'est utilisé.</p>`
   },
@@ -113,7 +117,7 @@ const LEGAL_CONTENT = {
       <h2>Résiliation</h2>
       <p>Tout utilisateur peut demander la suppression de son compte à tout moment. Interim se réserve le droit de suspendre un compte en cas de non-respect des présentes CGU.</p>
       <h2>Droit applicable</h2>
-      <p>Les présentes CGU sont soumises au droit sénégalais. Pour toute question, contactez <strong>[email de contact à compléter]</strong>.</p>`
+      <p>Les présentes CGU sont soumises au droit sénégalais. Pour toute question, contactez <strong>yacine.fall@previmax.space</strong>.</p>`
   }
 };
 
@@ -255,12 +259,14 @@ function publicFilters() {
   return state.publicMissions.filter((m) =>
     (!q || `${m.title} ${m.sector} ${m.description}`.toLowerCase().includes(q)) &&
     (!city || (m.city || '').toLowerCase().includes(city)) &&
-    (state.publicSector === 'all' || m.sector === state.publicSector) &&
     (state.publicContract === 'all' || m.contractType === state.publicContract)
   );
 }
 
-const publicFiltered = () => Boolean(state.publicQuery.trim() || state.publicCity.trim() || state.publicSector !== 'all' || state.publicContract !== 'all');
+// Le secteur est exclu volontairement : il est applique par Firestore, donc les
+// offres recues sont deja celles du secteur choisi. L'y inclure couperait la
+// pagination et le compteur, qui se desactivent des qu'un filtre local est actif.
+const publicFiltered = () => Boolean(state.publicQuery.trim() || state.publicCity.trim() || state.publicContract !== 'all');
 
 function publicCountLabel(count) {
   return `${count} offre${count > 1 ? 's' : ''}`;
@@ -297,6 +303,33 @@ function publicResultsTitle() {
   return `${total} offre${total > 1 ? 's' : ''} d'emploi`;
 }
 
+// Recharge le tableau d'offres pour un secteur donne.
+//
+// Le total est recalcule en meme temps, sinon le compteur « X sur Y offres »
+// continuerait d'annoncer le total toutes offres confondues sous une liste qui
+// n'en montre qu'un secteur.
+async function changerSecteur(secteur) {
+  if (state.sectorLoading) return;
+  state.publicSector = secteur;
+  state.sectorLoading = true;
+  render();
+  try {
+    const [page, total] = await Promise.all([
+      loadPublicMissions(secteur),
+      countPublishedMissions(secteur).catch(() => null),
+    ]);
+    state.publicMissions = page.missions;
+    state.publicPagination = page.pagination;
+    state.publicTotal = total;
+  } catch (error) {
+    toast(errorMessage(error), true);
+  } finally {
+    state.sectorLoading = false;
+    render();
+    document.querySelector('#public-sector-filter')?.focus();
+  }
+}
+
 function refreshPublicResults() {
   const zone = document.querySelector('#public-results');
   if (!zone) return;
@@ -311,7 +344,11 @@ function publicMissionsScreen() {
   const sectorOpts = SECTORS.map((s) => `<option value="${esc(s)}" ${state.publicSector === s ? 'selected' : ''}>${esc(s)}</option>`).join('');
   const contracts = [...new Set(state.publicMissions.map((m) => m.contractType).filter(Boolean))].sort();
   const contractOpts = contracts.map((c) => `<option value="${esc(c)}" ${state.publicContract === c ? 'selected' : ''}>${esc(c)}</option>`).join('');
-  const bySector = SECTORS.map((s) => [s, state.publicMissions.filter((m) => m.sector === s).length]).filter(([, n]) => n);
+  // Les comptages viennent du serveur. Tant qu'ils ne sont pas arrives, on
+  // retombe sur la page chargee plutot que d'afficher une section vide.
+  const bySector = SECTORS
+    .map((s) => [s, state.sectorCounts[s] ?? state.publicMissions.filter((m) => m.sector === s).length])
+    .filter(([, n]) => n);
   const count = publicFiltered() ? publicFilters().length : (state.publicTotal ?? state.publicMissions.length);
   return `${publicHeader('missions')}
   <section class="search-hero"><div class="container">
@@ -528,15 +565,15 @@ function bindPublicResults() {
     const mission = list.find((m) => m.id === el.dataset.job);
     if (mission) jobModal(mission);
   }));
-  document.querySelector('#public-reset')?.addEventListener('click', () => {
-    Object.assign(state, { publicQuery: '', publicCity: '', publicSector: 'all', publicContract: 'all' });
-    render();
+  document.querySelector('#public-reset')?.addEventListener('click', async () => {
+    Object.assign(state, { publicQuery: '', publicCity: '', publicContract: 'all' });
+    await changerSecteur('all');
   });
   document.querySelector('[data-load-more-public]')?.addEventListener('click', async (e) => {
     const button = e.currentTarget;
     button.disabled = true;
     try {
-      const page = await loadMorePublicMissions(state.publicPagination?.cursor);
+      const page = await loadMorePublicMissions(state.publicPagination?.cursor, state.publicSector);
       state.publicMissions = state.publicMissions.concat(page.rows);
       state.publicPagination = { cursor: page.cursor, hasMore: page.hasMore };
       refreshPublicResults();
@@ -558,15 +595,14 @@ function bindPublic() {
   // Job board: filtering only redraws the results so typing keeps focus and caret.
   document.querySelector('#public-search')?.addEventListener('input', (e) => { state.publicQuery = e.target.value; refreshPublicResults(); });
   document.querySelector('#public-city')?.addEventListener('input', (e) => { state.publicCity = e.target.value; refreshPublicResults(); });
-  document.querySelector('#public-sector-filter')?.addEventListener('change', (e) => { state.publicSector = e.target.value; refreshPublicResults(); });
+  document.querySelector('#public-sector-filter')?.addEventListener('change', (e) => changerSecteur(e.target.value));
   document.querySelector('#public-contract')?.addEventListener('change', (e) => { state.publicContract = e.target.value; refreshPublicResults(); });
   document.querySelector('#public-search-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
     document.querySelector('#results')?.scrollIntoView({ behavior: 'smooth' });
   });
-  document.querySelectorAll('[data-sector-link]').forEach((el) => el.addEventListener('click', () => {
-    state.publicSector = el.dataset.sectorLink;
-    render();
+  document.querySelectorAll('[data-sector-link]').forEach((el) => el.addEventListener('click', async () => {
+    await changerSecteur(el.dataset.sectorLink);
     document.querySelector('#results')?.scrollIntoView();
   }));
   bindPublicResults();
@@ -1565,6 +1601,9 @@ async function loadSession(user) {
       state.publicMissions = pub.missions;
       state.publicPagination = pub.pagination;
       state.publicTotal = total;
+      countPublishedBySector(SECTORS.filter((s) => s !== 'Autre'))
+        .then((counts) => { state.sectorCounts = counts; if (!state.session) render(); })
+        .catch(() => {});
     } catch (error) { toast(errorMessage(error), true); }
     render();
     return;

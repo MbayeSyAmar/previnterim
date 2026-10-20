@@ -161,16 +161,30 @@ def detect_contract(*texts: str) -> str:
                 return label
     return ""
 
+# Les libelles doivent rester identiques a SECTORS dans app.js : c'est ce champ
+# qui alimente le filtre « Secteur » du site. Un libelle qui n'existe que d'un
+# cote produit des offres que personne ne peut filtrer.
+#
+# L'ordre compte, le premier mot-cle trouve gagne. Le nettoyage et la securite
+# passent avant les categories larges, sinon « agent de nettoyage industriel »
+# tomberait dans l'industrie et « agent de securite incendie » dans la sante.
 SECTORS = {
-    "BTP / Construction":        ["btp", "construct", "bâtiment", "génie civil", "travaux"],
-    "Industrie / Production":    ["industri", "product", "manufactur", "usine", "atelier"],
-    "Transport / Logistique":    ["transport", "logistiq", "chauffeur", "livraison", "supply"],
+    "Nettoyage / Services":      ["nettoyage", "propreté", "entretien des locaux", "agent d'entretien",
+                                  "femme de ménage", "laveur de vitres", "hygiène"],
+    "Sécurité / Gardiennage":    ["sécurité", "gardien", "surveillance", "vigile", "maître-chien", "ssiap"],
+    "BTP / Construction":        ["btp", "construct", "bâtiment", "génie civil", "travaux", "maçon",
+                                  "coffreur", "ferrailleur"],
+    "Industrie / Production":    ["industri", "product", "manufactur", "usine", "atelier", "soudeur",
+                                  "électromécanic"],
+    "Transport / Logistique":    ["transport", "logistiq", "chauffeur", "livraison", "supply", "cariste",
+                                  "magasinier", "manutention"],
     "Commerce / Vente":          ["commerc", "vente", "vendeur", "retail", "boutique"],
     "Informatique / Tech":       ["informatiq", "développeur", "developer", "tech", "digital", "web", "software"],
     "Finance / Comptabilité":    ["financ", "comptab", "audit", "banque", "fiscal"],
     "Santé / Social":            ["santé", "médic", "infirm", "social", "humanitaire", "ong"],
     "Agriculture / Élevage":     ["agricult", "élevage", "agronom", "rural", "pêche"],
-    "Hôtellerie / Restauration": ["hôtel", "restaur", "cuisine", "chef", "tourisme"],
+    "Hôtellerie / Restauration": ["hôtel", "restaur", "cuisine", "chef", "tourisme", "serveur",
+                                  "réceptionniste", "plongeur", "barman"],
     "Administration / RH":       ["admin", " rh ", "ressources humaines", "secrétaire", "assistant"],
     "Enseignement / Formation":  ["enseign", "format", "professeur", "éducation", "école"],
 }
