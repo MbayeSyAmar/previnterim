@@ -77,7 +77,7 @@ const LEGAL_CONTENT = {
       <h2>Éditeur du site</h2>
       <p>Le site Interim est édité par <strong>Previmax - Group</strong>, immatriculé sous le numéro NINEA <strong>013340138</strong>, dont le siège est situé à <strong>Dakar, Keur Massar, Sénégal</strong>. Contact : <strong>yacine.fall@previmax.space</strong>.</p>
       <h2>Hébergement</h2>
-      <p>Le site est hébergé par Google Ireland Limited (Firebase Hosting), Gordon House, Barrow Street, Dublin 4, Irlande. Les documents candidats sont hébergés par Cloudinary Ltd. Les e-mails transactionnels sont envoyés par Brevo (Sendinblue SAS), 106 boulevard Haussmann, 75008 Paris, France.</p>
+      <p>Le site est hébergé par Google Ireland Limited, Gordon House, Barrow Street, Dublin 4, Irlande. Les autres prestataires techniques qui concourent au fonctionnement de la plateforme sont établis dans l'Union européenne. La liste à jour est communiquée sur simple demande à <strong>yacine.fall@previmax.space</strong>.</p>
       <h2>Propriété intellectuelle</h2>
       <p>L'ensemble des contenus du site (textes, structure, identité visuelle) est protégé. Les offres de mission importées automatiquement depuis des sites tiers restent la propriété de leurs éditeurs respectifs et sont reproduites à titre informatif, avec un lien vers la source d'origine.</p>`
   },
@@ -91,13 +91,13 @@ const LEGAL_CONTENT = {
       <h2>Finalités</h2>
       <p>Mise en relation entre candidats et entreprises, qualification des candidatures par l'équipe Interim, gestion des comptes, envoi de notifications relatives au suivi de vos candidatures, missions ou entretiens.</p>
       <h2>Destinataires et sous-traitants</h2>
-      <p>Vos données sont hébergées par Firebase/Google (authentification et base de données), vos documents par Cloudinary, et les e-mails de confirmation et de notification sont envoyés via Brevo. Si vous vous connectez avec Google, nous recevons uniquement votre nom et votre adresse e-mail. Aucune donnée n'est vendue à des tiers. Votre identité complète n'est jamais communiquée à une entreprise sans votre candidature explicite ; seules des informations anonymisées sont partagées lors de la présentation d'un profil.</p>
+      <p>Vos données sont hébergées par Google Ireland Limited. Vos documents sont confiés à un prestataire de stockage, et les e-mails de confirmation et de notification sont acheminés par un prestataire d'envoi ; les deux sont établis dans l'Union européenne et agissent sur nos seules instructions. L'identité de ces sous-traitants vous est communiquée sur demande à <strong>yacine.fall@previmax.space</strong>. Si vous vous connectez avec Google, nous recevons uniquement votre nom et votre adresse e-mail. Aucune donnée n'est vendue à des tiers. Votre identité complète n'est jamais communiquée à une entreprise sans votre candidature explicite ; seules des informations anonymisées sont partagées lors de la présentation d'un profil.</p>
       <h2>Durée de conservation</h2>
       <p>Vos données sont conservées le temps de votre inscription sur la plateforme, puis archivées ou supprimées conformément à la réglementation applicable après clôture du compte.</p>
       <h2>Vos droits</h2>
       <p>Vous disposez d'un droit d'accès, de rectification, de suppression et d'opposition sur vos données personnelles. Pour l'exercer, contactez <strong>yacine.fall@previmax.space</strong>.</p>
       <h2>Cookies et stockage local</h2>
-      <p>Le site utilise uniquement le stockage nécessaire à l'authentification (session Firebase Auth). Aucun cookie publicitaire ou de traçage tiers n'est utilisé.</p>`
+      <p>Le site utilise uniquement le stockage nécessaire au maintien de votre session de connexion. Aucun cookie publicitaire ou de traçage tiers n'est utilisé.</p>`
   },
   terms: {
     title: 'Conditions générales d\'utilisation',
