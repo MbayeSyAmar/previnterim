@@ -1,0 +1,57 @@
+name: Relance CV
+
+# Declenchement manuel uniquement. Ce n'est pas une tache periodique : relancer
+# les memes personnes toutes les cinq minutes serait du harcelement.
+#
+# Le script passe par le journal `serverOnlyMailLog`, donc un candidat deja
+# relance ne l'est pas deux fois, meme si le workflow est relance. L'option
+# « forcer » contourne ce garde-fou, a n'utiliser que sciemment.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Afficher les destinataires sans envoyer"
+        type: boolean
+        default: true
+      forcer:
+        description: "Relancer meme les candidats deja relances"
+        type: boolean
+        default: false
+
+concurrency:
+  group: mailer # partage avec le mailer : jamais deux ecritures du journal en parallele
+  cancel-in-progress: false
+
+jobs:
+  relance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mailer/requirements.txt
+
+      - name: Installer les dependances
+        run: pip install -r mailer/requirements.txt
+
+      - name: Relancer les candidats sans CV
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          MAIL_SENDER_EMAIL: no-replay@previmax.space
+          MAIL_SENDER_NAME: PrevInterim
+          ADMIN_EMAIL: mbaye.amar@previmax.space,samba.cisse@previmax.space,yacine.fall@previmax.space
+          APP_URL: https://gerart-6cdc1.web.app
+        run: |
+          args=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then args="$args --dry-run"; fi
+          if [ "${{ inputs.forcer }}" = "true" ]; then args="$args --again"; fi
+          echo "python mailer/relance_cv.py $args"
+          python mailer/relance_cv.py $args
