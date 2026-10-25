@@ -93,7 +93,15 @@ service cloud.firestore {
     }
 
     match /candidateDocuments/{documentId} {
-      allow read: if isAdmin() || (isCandidate() && resource.data.candidateId == request.auth.uid);
+      // Lire l'adresse de son propre CV est toujours autorise, meme quand le
+      // document n'existe pas encore. Sans cette troisieme branche, la lecture
+      // d'un document absent est REFUSEE et non vide : `resource` vaut null,
+      // donc `resource.data.candidateId` ne peut pas etre evalue. L'ecran du
+      // candidat interrogeant cette adresse a chaque chargement, tout candidat
+      // sans CV se voyait refuser le chargement complet de son espace.
+      allow read: if isAdmin()
+        || (isCandidate() && resource != null && resource.data.candidateId == request.auth.uid)
+        || (signedIn() && documentId == request.auth.uid + '_cv');
       allow create: if isAdmin() || (signedIn() && request.auth.uid == request.resource.data.candidateId && request.resource.data.uploadedBy == request.auth.uid);
       // Le CV vit a une adresse fixe pour que la regle des candidatures puisse
       // le verifier, donc en deposer un nouveau est une mise a jour et non une
