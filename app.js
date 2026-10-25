@@ -1,6 +1,6 @@
 ﻿import {
   applyToMission, auth, countPublishedMissions, createAccountProfile, createInterview, createMission, createProposal,
-  getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals, loadMorePage, loadMorePublicMissions,
+  getDocumentsForCandidate, getSessionProfile, hasCvDocument, loadAcceptedProposals, loadMorePage, loadMorePublicMissions,
   countPublishedBySector, loadPublicMissions, loadWorkspace, login, logout,
   onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile,
   saveCompanyProfile, signInWithGoogle, submitContactMessage, updateApplication, updateCompanyStatus, updateMissionStatus,
@@ -744,7 +744,7 @@ function missionsPage() {
   const isCandidate = state.session.role === 'candidate';
   const sectorOpts = SECTORS.map(s => `<option value="${esc(s)}" ${state.sectorFilter === s ? 'selected' : ''}>${esc(s)}</option>`).join('');
   const statusOpts = Object.entries(missionStatus).map(([k, v]) => `<option value="${k}" ${state.filter === k ? 'selected' : ''}>${v}</option>`).join('');
-  return `<div class="page-head"><div><h1>${isCandidate ? 'Trouver une mission' : 'Gestion des missions'}</h1><p>${isCandidate ? 'L\'identité de l\'entreprise reste confidentielle pendant la sélection.' : 'Créez et suivez chaque besoin de recrutement.'}</p></div>${canCreate ? `<button class="btn btn-primary" data-modal="mission">${icons.plus}<span>Nouvelle mission</span></button>` : ''}</div><div class="toolbar"><label class="search">${icons.search}<input id="search" value="${esc(state.query)}" placeholder="Métier, ville, secteur..."></label><div class="filters"><select class="select" id="sector-filter"><option value="all">Tous les secteurs</option>${sectorOpts}</select>${!isCandidate ? `<select class="select" id="status-filter"><option value="all">Tous les statuts</option>${statusOpts}</select>` : ''}</div></div>${isCandidate ? candidateJobGrid(visible) : `<section class="card"><div class="card-head"><h2>${visible.length} mission${visible.length > 1 ? 's' : ''}</h2></div>${visible.length ? `<div class="mission-list">${visible.map(missionCard).join('')}</div>` : empty('Aucune mission ne correspond à votre recherche.')}${loadMoreButton('missions', 'Charger plus de missions')}</section>`}`;
+  return `${isCandidate ? cvBanner() : ''}<div class="page-head"><div><h1>${isCandidate ? 'Trouver une mission' : 'Gestion des missions'}</h1><p>${isCandidate ? 'L\'identité de l\'entreprise reste confidentielle pendant la sélection.' : 'Créez et suivez chaque besoin de recrutement.'}</p></div>${canCreate ? `<button class="btn btn-primary" data-modal="mission">${icons.plus}<span>Nouvelle mission</span></button>` : ''}</div><div class="toolbar"><label class="search">${icons.search}<input id="search" value="${esc(state.query)}" placeholder="Métier, ville, secteur..."></label><div class="filters"><select class="select" id="sector-filter"><option value="all">Tous les secteurs</option>${sectorOpts}</select>${!isCandidate ? `<select class="select" id="status-filter"><option value="all">Tous les statuts</option>${statusOpts}</select>` : ''}</div></div>${isCandidate ? candidateJobGrid(visible) : `<section class="card"><div class="card-head"><h2>${visible.length} mission${visible.length > 1 ? 's' : ''}</h2></div>${visible.length ? `<div class="mission-list">${visible.map(missionCard).join('')}</div>` : empty('Aucune mission ne correspond à votre recherche.')}${loadMoreButton('missions', 'Charger plus de missions')}</section>`}`;
 }
 
 function candidateJobGrid(visible) {
@@ -1222,7 +1222,21 @@ function profilePage() {
     <div class="field full"><label>SIRET</label><input name="siret" value="${esc(p.siret)}"></div>`;
   return `<div class="page-head"><div><h1>${isCandidate ? 'Mon profil candidat' : 'Mon entreprise'}</h1><p>Ces informations sont accessibles uniquement à l'équipe administrateur.</p></div></div>
     <section class="card"><form id="profile-form" class="form-grid">${isCandidate ? candidateFields : companyFields}<div class="field full"><button class="btn btn-primary">Enregistrer les modifications</button></div></form></section>
-    ${isCandidate ? `<section class="card"><div class="card-head"><h2>CV et documents</h2>${docBadge}</div><form id="document-form" class="form-grid"><div class="field"><label>Type de document</label><select name="documentType"><option value="cv">CV</option><option value="identity">Pièce d'identité</option><option value="certificate">Certificat / diplôme</option><option value="other">Autre</option></select></div><div class="field"><label>Fichier (PDF, JPG ou PNG, 10 Mo max.)</label><input name="document" type="file" accept=".pdf,image/jpeg,image/png" required></div><div class="field full"><button class="btn btn-primary">Envoyer le document</button></div></form></section>` : ''}`;
+    ${isCandidate ? `<section class="card"><div class="card-head"><h2>CV et documents</h2>${state.workspace.hasCv ? badge('CV depose', 'green') : badge('CV manquant', 'red')}${docBadge}</div>${state.workspace.hasCv === false ? '<p class="muted-block">Le CV est obligatoire pour postuler. Choisissez le type « CV » ci-dessous et envoyez votre fichier.</p>' : ''}<form id="document-form" class="form-grid"><div class="field"><label>Type de document</label><select name="documentType"><option value="cv">CV</option><option value="identity">Pièce d'identité</option><option value="certificate">Certificat / diplôme</option><option value="other">Autre</option></select></div><div class="field"><label>Fichier (PDF, JPG ou PNG, 10 Mo max.)</label><input name="document" type="file" accept=".pdf,image/jpeg,image/png" required></div><div class="field full"><button class="btn btn-primary">Envoyer le document</button></div></form></section>` : ''}`;
+}
+
+// Bandeau affiche tant que le CV manque.
+//
+// Le refus est aussi applique par les regles Firestore, mais un refus sans
+// explication est une impasse : la personne ne sait ni ce qui manque ni ou le
+// deposer. Le bandeau le dit, et le bouton y mene.
+function cvBanner() {
+  if (state.session?.role !== 'candidate' || state.workspace.hasCv !== false) return '';
+  return `<div class="notice notice-warning">
+    <strong>Ajoutez votre CV pour pouvoir postuler.</strong>
+    Les candidatures sans CV ne peuvent pas etre etudiees, elles sont donc bloquees.
+    <button class="btn btn-outline btn-small" data-page="profile" style="margin-left:10px">Ajouter mon CV</button>
+  </div>`;
 }
 
 function empty(text) {

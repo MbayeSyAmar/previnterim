@@ -33,6 +33,11 @@ jobs:
       - name: Envoyer les e-mails
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # PreviMax Teams est un autre projet Firebase et partage cet envoi.
+          # Tant que ce secret est absent, la partie Teams est sautee sans faire
+          # echouer le passage : les e-mails PrevInterim continuent de partir.
+          FIREBASE_SERVICE_ACCOUNT_TEAMS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_TEAMS }}
+          TEAMS_APP_URL: https://teams.previmax.space
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           MAIL_SENDER_EMAIL: no-replay@previmax.space
           MAIL_SENDER_NAME: PrevInterim

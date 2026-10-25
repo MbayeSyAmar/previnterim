@@ -224,6 +224,10 @@ svg { flex-shrink: 0; }
 .hint { color: var(--muted); font-size: 13px; }
 .form-error { background: var(--red-soft); color: var(--red); border: 1px solid #f5c2bd; border-radius: var(--radius); padding: 10px 12px; font-size: 14px; }
 .notice { background: var(--primary-soft); color: #174e3d; border: 1px solid #c3e0d1; border-radius: var(--radius); padding: 12px 14px; margin-bottom: 20px; font-size: 14px; }
+/* Le ton par defaut de .notice est celui d'une confirmation. Un avertissement
+   qui bloque une action ne doit pas emprunter la couleur du succes. */
+.notice-warning { background: var(--amber-soft); color: var(--amber); border-color: var(--amber); }
+.notice-warning strong { display: block; margin-bottom: 2px; }
 
 /* ── App shell (signed in) ── */
 .app-header { background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }

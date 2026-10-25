@@ -9,6 +9,17 @@ Variables d'environnement :
   FIREBASE_SERVICE_ACCOUNT  JSON du compte de service (secret GitHub)
   BREVO_API_KEY             clé API Brevo xkeysib-... (secret GitHub)
   MAIL_SENDER_EMAIL, MAIL_SENDER_NAME, ADMIN_EMAIL (liste séparée par des virgules), APP_URL
+
+PreviMax Teams partage ce système d'envoi, sur un AUTRE projet Firebase. Deux
+variables s'ajoutent, et elles sont facultatives : sans elles, la partie Teams
+est simplement sautée, le reste continue de fonctionner.
+  FIREBASE_SERVICE_ACCOUNT_TEAMS  JSON du compte de service du projet Teams
+  TEAMS_APP_URL                   adresse publique de la plateforme Teams
+
+Le journal d'envoi reste dans la base PrevInterim pour les deux plateformes :
+une seule source de vérité évite d'envoyer deux fois le même e-mail si l'une
+des deux bases est momentanément inaccessible.
+
 Option : --dry-run affiche les e-mails sans les envoyer ni rien écrire.
 """
 import html
@@ -32,6 +43,8 @@ SENDER_EMAIL = os.environ.get("MAIL_SENDER_EMAIL", "")
 SENDER_NAME = os.environ.get("MAIL_SENDER_NAME", "Interim")
 ADMIN_EMAILS = [e.strip() for e in os.environ.get("ADMIN_EMAIL", "").split(",") if e.strip()]
 APP_URL = os.environ.get("APP_URL", "")
+TEAMS_URL = os.environ.get("TEAMS_APP_URL", "")
+TEAMS_NAME = "PreviMax Teams"
 
 APPLICATION_STATUS = {"pending": "En attente", "reviewing": "En cours d'examen", "interview": "Entretien prévu",
                       "presented": "Présentée au client", "accepted": "Acceptée", "rejected": "Non retenue"}
@@ -40,6 +53,7 @@ TOPICS = {"candidate": "Candidat", "company": "Entreprise", "other": "Autre"}
 
 esc = html.escape
 db = None
+db_teams = None  # second projet Firebase, celui de PreviMax Teams
 sent_count = 0
 failures = 0
 
@@ -61,7 +75,11 @@ def fr_datetime(value: str) -> str:
     return f"{fr_date(d.replace(tzinfo=DAKAR))} à {d:%H:%M}"
 
 
-def layout(title, intro, rows=(), cta=None) -> str:
+def layout(title, intro, rows=(), cta=None, brand=None) -> str:
+    # `brand` permet a PreviMax Teams d'emprunter cet envoi sans se faire passer
+    # pour PrevInterim : le pied de page et le lien designent alors la bonne
+    # plateforme. Sans lui, rien ne change pour les e-mails existants.
+    brand_name, brand_url = brand or (SENDER_NAME, APP_URL)
     rows_html = "".join(
         f'<tr><td style="padding:10px 14px;border-bottom:1px solid #e2e7e4;background:#f5f7f5;color:#5c6863;font-size:13px;width:38%;vertical-align:top">{esc(k)}</td>'
         f'<td style="padding:10px 14px;border-bottom:1px solid #e2e7e4;color:#1b2521;font-size:14px;white-space:pre-line">{esc(str(v or "Non renseigné"))}</td></tr>'
@@ -69,9 +87,9 @@ def layout(title, intro, rows=(), cta=None) -> str:
     )
     table = (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:20px 0;border:1px solid #e2e7e4">{rows_html}</table>'
              if rows else "")
-    button = (f'<p style="margin:24px 0 0"><a href="{esc(cta[1] or APP_URL)}" style="display:inline-block;background:#1f6b52;color:#ffffff;text-decoration:none;'
+    button = (f'<p style="margin:24px 0 0"><a href="{esc(cta[1] or brand_url)}" style="display:inline-block;background:#1f6b52;color:#ffffff;text-decoration:none;'
               f'padding:12px 20px;border-radius:6px;font-weight:600;font-size:14px">{esc(cta[0])}</a></p>' if cta else "")
-    site = f'<a href="{esc(APP_URL)}" style="color:#1f6b52">{esc(APP_URL.split("//")[-1])}</a>' if APP_URL else ""
+    site = f'<a href="{esc(brand_url)}" style="color:#1f6b52">{esc(brand_url.split("//")[-1])}</a>' if brand_url else ""
     return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{esc(title)}</title></head>
 <body style="margin:0;padding:0;background:#f5f7f5;font-family:Arial,Helvetica,sans-serif;color:#1b2521">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f7f5;padding:24px 12px"><tr><td align="center">
@@ -79,7 +97,7 @@ def layout(title, intro, rows=(), cta=None) -> str:
 <tr><td style="background:#ffffff;padding:18px 28px;border-bottom:3px solid #1f6b52"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="width:32px;height:32px;background:#1f6b52;border-radius:8px;color:#eef8f2;font-family:Manrope,Arial,sans-serif;font-weight:800;font-size:16px;text-align:center;vertical-align:middle">I</td><td style="padding-left:10px;font-family:Manrope,Arial,sans-serif;font-weight:800;font-size:20px;color:#17201d">Interim.</td></tr></table></td></tr>
 <tr><td style="padding:28px"><h1 style="margin:0 0 12px;font-size:20px;color:#123d30">{esc(title)}</h1>
 <p style="margin:0;font-size:15px;line-height:1.6">{intro}</p>{table}{button}</td></tr>
-<tr><td style="padding:16px 28px;border-top:1px solid #e2e7e4;color:#5c6863;font-size:12px;line-height:1.5">Cet e-mail est envoyé automatiquement par la plateforme {esc(SENDER_NAME)}. {site}</td></tr>
+<tr><td style="padding:16px 28px;border-top:1px solid #e2e7e4;color:#5c6863;font-size:12px;line-height:1.5">Cet e-mail est envoyé automatiquement par la plateforme {esc(brand_name)}. {site}</td></tr>
 </table></td></tr></table></body></html>"""
 
 
@@ -90,7 +108,7 @@ def plain(title, intro, rows=()) -> str:
 
 # ── Envoi ──────────────────────────────────────────────────────────────────────
 
-def send(to, subject, title, intro, rows=(), cta=None, reply_to=None, to_name=None, tag=None):
+def send(to, subject, title, intro, rows=(), cta=None, reply_to=None, to_name=None, tag=None, brand=None):
     global sent_count
     recipients = [e for e in ([to] if isinstance(to, str) else to) if e]
     if not recipients:
@@ -102,7 +120,7 @@ def send(to, subject, title, intro, rows=(), cta=None, reply_to=None, to_name=No
         "sender": {"email": SENDER_EMAIL, "name": SENDER_NAME},
         "to": [{"email": e, **({"name": to_name} if to_name and len(recipients) == 1 else {})} for e in recipients],
         "subject": subject,
-        "htmlContent": layout(title, intro, rows, cta),
+        "htmlContent": layout(title, intro, rows, cta, brand),
         "textContent": plain(title, intro, rows),
     }
     if reply_to:
@@ -192,6 +210,22 @@ def contact_of(uid):
 
 def changed_since(collection, field, since):
     return list(db.collection(collection).where(filter=FieldFilter(field, ">", since)).stream())
+
+
+def changed_group_since(client, collection, field, since):
+    """Comme changed_since, mais pour une sous-collection.
+
+    Les messages vivent sous `conversations/{id}/messages`, donc une requete de
+    collection ordinaire ne les voit pas. Une requete de groupe exige un index
+    de portee COLLECTION_GROUP, declare dans firestore.indexes.json : sans lui
+    la requete echoue, elle ne renvoie pas une liste vide.
+    """
+    return list(client.collection_group(collection).where(filter=FieldFilter(field, ">", since)).stream())
+
+
+def parent_id(doc):
+    """Identifiant du document parent d'une sous-collection."""
+    return doc.reference.parent.parent.id
 
 
 def is_scraped(doc_id, data):
@@ -307,6 +341,135 @@ def on_contact(msg):
                reply_to={"email": msg["email"], "name": msg.get("name") or msg["email"]}, tag="admin-contact")
 
 
+def apercu(texte, limite=600):
+    """Extrait lisible d'un message, sans le tronquer au milieu d'un mot."""
+    t = " ".join(str(texte or "").split())
+    if len(t) <= limite:
+        return t
+    return t[:limite].rsplit(" ", 1)[0] + "..."
+
+
+def on_admin_message(doc):
+    """Un message envoye par l'equipe doit arriver par e-mail aussi.
+
+    La messagerie n'est pas consultee tous les jours : un message qui n'existe
+    que dans l'application attend que la personne pense a venir voir. Seuls les
+    messages des administrateurs declenchent un e-mail ; les reponses des
+    candidats et des entreprises arrivent deja dans le tableau de bord de
+    l'equipe.
+    """
+    m = doc.to_dict()
+    if m.get("senderRole") != "admin":
+        return
+
+    conversation = get(f"conversations/{parent_id(doc)}")
+    kind = conversation.get("type")
+    if kind == "admin-candidate":
+        uid = conversation.get("candidateId")
+    elif kind == "admin-company":
+        uid = conversation.get("companyId")
+    else:
+        # candidate-company : aucun administrateur n'y ecrit.
+        return
+    if not uid:
+        return
+
+    email, name, _ = contact_of(uid)
+    if not email:
+        print(f"  message ignore : pas d'adresse pour {uid}")
+        return
+
+    send(email, "Nouveau message de l'equipe Interim", "Vous avez un nouveau message",
+         "L'equipe Interim vous a ecrit dans votre messagerie. "
+         "Repondez depuis la plateforme pour conserver l'historique de l'echange.",
+         [("Message", apercu(m.get("text"))), ("Date", fr_date())],
+         cta=("Ouvrir ma messagerie", APP_URL), to_name=name, tag="message-admin")
+
+
+# ── PreviMax Teams ────────────────────────────────────────────────────────────
+
+def teams_brand():
+    return (TEAMS_NAME, TEAMS_URL or APP_URL)
+
+
+def teams_users():
+    """Annuaire Teams, charge une fois par passage.
+
+    Les fiches portent l'adresse directement, il n'y a donc pas besoin d'appeler
+    l'authentification comme pour PrevInterim.
+    """
+    return {d.id: d.to_dict() for d in db_teams.collection("users").stream()}
+
+
+def teams_destinataires(users, exclure_uid=None, unite=None):
+    sortie = []
+    for uid, u in users.items():
+        if uid == exclure_uid or u.get("statut") != "actif" or not u.get("email"):
+            continue
+        if unite is not None and u.get("orgUnitId") != unite:
+            continue
+        sortie.append((u["email"], u.get("nomComplet") or u["email"]))
+    return sortie
+
+
+def on_teams_annonce(doc_id, a, users):
+    unite = a.get("cibleUnitId") if a.get("portee") == "unite" else None
+    cibles = teams_destinataires(users, a.get("auteurUid"), unite)
+    if not cibles:
+        print(f"  annonce {doc_id} : aucun destinataire")
+        return
+
+    portee = "Toute l'entreprise" if a.get("portee") != "unite" else "Votre unite"
+    # Un envoi par personne : mettre tout le monde dans le champ To revelerait
+    # l'annuaire interne a chaque destinataire.
+    for email, nom in cibles:
+        send(email, f"Annonce : {a.get('titre', '')}", a.get("titre") or "Nouvelle annonce",
+             f"{esc(a.get('auteurNom', ''))} a publie une annonce sur {esc(TEAMS_NAME)}.",
+             [("Portee", portee), ("Auteur", f"{a.get('auteurNom', '')} ({a.get('auteurPoste', '')})"),
+              ("Priorite", a.get("priorite") or "normale"),
+              ("Annonce", apercu(a.get("corps"), 1200)), ("Date", fr_date())],
+             cta=("Lire sur la plateforme", TEAMS_URL), to_name=nom,
+             tag="teams-annonce", brand=teams_brand())
+
+
+def on_teams_message(doc, users):
+    m = doc.to_dict()
+    conversation_id = parent_id(doc)
+    snap = db_teams.collection("conversations").document(conversation_id).get()
+    conversation = snap.to_dict() if snap.exists else {}
+
+    for uid in conversation.get("participants", []):
+        if uid == m.get("auteurUid"):
+            continue
+        u = users.get(uid) or {}
+        if u.get("statut") != "actif" or not u.get("email"):
+            continue
+        send(u["email"], f"Message de {m.get('auteurNom', 'un collegue')}", "Nouveau message",
+             f"{esc(m.get('auteurNom', ''))} vous a ecrit sur {esc(TEAMS_NAME)}.",
+             [("Auteur", f"{m.get('auteurNom', '')} ({m.get('auteurPoste', '')})"),
+              ("Message", apercu(m.get("texte"))), ("Date", fr_date())],
+             cta=("Repondre sur la plateforme", TEAMS_URL),
+             to_name=u.get("nomComplet"), tag="teams-message", brand=teams_brand())
+
+
+def run_teams(since):
+    """Partie Teams du passage. Sautee proprement si le projet n'est pas configure."""
+    if db_teams is None:
+        return
+    print("PreviMax Teams :")
+    users = teams_users()
+    print(f"  {len(users)} compte(s) dans l'annuaire")
+
+    # `annonces` est une collection racine : une requete ordinaire suffit, et
+    # elle se contente de l'index a champ unique que Firestore cree seul.
+    for doc in db_teams.collection("annonces").where(
+            filter=FieldFilter("publieLe", ">", since)).stream():
+        once(f"teams_annonce_{doc.id}", on_teams_annonce, doc.id, doc.to_dict(), users)
+
+    for doc in changed_group_since(db_teams, "messages", "envoyeLe", since):
+        once(f"teams_message_{doc.id}", on_teams_message, doc, users)
+
+
 # ── Passage ────────────────────────────────────────────────────────────────────
 
 def bootstrap(now):
@@ -371,6 +534,12 @@ def run():
     for doc in changed_since("contactMessages", "createdAt", since):
         once(f"contact_{doc.id}", on_contact, doc.to_dict())
 
+    # Messages de la messagerie : sous-collection, donc requete de groupe.
+    for doc in changed_group_since(db, "messages", "createdAt", since):
+        once(f"message_{doc.id}", on_admin_message, doc)
+
+    run_teams(since)
+
     # Après un échec, la fenêtre n'avance pas : le prochain passage réessaie
     # (les envois réussis sont protégés par le journal). Au-delà d'une heure,
     # on avance quand même pour ne pas rester bloqué sur une adresse invalide.
@@ -381,7 +550,7 @@ def run():
 
 
 def main():
-    global db
+    global db, db_teams
     missing = [k for k in ("BREVO_API_KEY", "MAIL_SENDER_EMAIL") if not os.environ.get(k)]
     if missing and not DRY_RUN:
         raise SystemExit(f"Configuration manquante : {', '.join(missing)}")
@@ -395,6 +564,18 @@ def main():
         cred = credentials.Certificate(path)
     firebase_admin.initialize_app(cred)
     db = firestore.client()
+
+    # PreviMax Teams vit sur un autre projet Firebase. Son compte de service est
+    # facultatif : sans lui, la partie Teams est sautee et PrevInterim continue
+    # de fonctionner, plutot que de faire echouer tout le passage.
+    sa_teams = os.environ.get("FIREBASE_SERVICE_ACCOUNT_TEAMS")
+    if sa_teams:
+        app_teams = firebase_admin.initialize_app(
+            credentials.Certificate(json.loads(sa_teams)), name="teams")
+        db_teams = firestore.client(app=app_teams)
+    else:
+        print("FIREBASE_SERVICE_ACCOUNT_TEAMS absent : partie PreviMax Teams sautee.")
+
     run()
 
 

@@ -57,9 +57,19 @@ service cloud.firestore {
     }
 
     match /applications/{applicationId} {
+      // Un CV est exige avant toute candidature. Sans lui, l'equipe recoit des
+      // dossiers qu'elle ne peut pas qualifier : au 2026-10-25, sur douze
+      // profils candidats un seul avait depose un CV, et les sept candidatures
+      // existantes venaient toutes de profils sans CV.
+      //
+      // Le controle passe par un chemin previsible, `candidateDocuments/<uid>_cv`,
+      // parce qu'une regle ne peut pas interroger une collection : elle ne sait
+      // que lire un document dont elle connait l'adresse. Voir `ID_CV` dans
+      // firebase.js, qui ecrit le CV a cette adresse.
       allow create: if isCandidate()
         && request.resource.data.candidateId == request.auth.uid
-        && request.resource.data.status == 'pending';
+        && request.resource.data.status == 'pending'
+        && exists(/databases/$(database)/documents/candidateDocuments/$(request.auth.uid + '_cv'));
       allow read: if isAdmin() || (isCandidate() && resource.data.candidateId == request.auth.uid);
       allow update: if isAdmin();
       allow delete: if isAdmin() || (isCandidate()
@@ -85,7 +95,17 @@ service cloud.firestore {
     match /candidateDocuments/{documentId} {
       allow read: if isAdmin() || (isCandidate() && resource.data.candidateId == request.auth.uid);
       allow create: if isAdmin() || (signedIn() && request.auth.uid == request.resource.data.candidateId && request.resource.data.uploadedBy == request.auth.uid);
-      allow update, delete: if isAdmin();
+      // Le CV vit a une adresse fixe pour que la regle des candidatures puisse
+      // le verifier, donc en deposer un nouveau est une mise a jour et non une
+      // creation. Elle reste limitee a son proprietaire et a son propre CV :
+      // l'identifiant doit etre exactement `<uid>_cv`, ce qui interdit de
+      // toucher au document de quelqu'un d'autre.
+      allow update: if isAdmin()
+        || (signedIn()
+          && documentId == request.auth.uid + '_cv'
+          && request.resource.data.candidateId == request.auth.uid
+          && request.resource.data.uploadedBy == request.auth.uid);
+      allow delete: if isAdmin();
     }
 
     match /placements/{placementId} {

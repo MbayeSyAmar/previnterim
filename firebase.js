@@ -160,6 +160,28 @@ function uploadDriveDocument(file, documentType, candidateId = '') {
   return apiRequest('/drive/upload', { method: 'POST', body });
 }
 
+// Identifiant deterministe du CV.
+//
+// Les regles Firestore ne peuvent pas interroger une collection : elles ne
+// savent que lire un document dont elles connaissent le chemin. Pour qu'une
+// regle puisse exiger la presence d'un CV avant une candidature, ce document
+// doit donc avoir un chemin previsible plutot qu'un identifiant automatique.
+//
+// Effet de bord utile : deposer un nouveau CV remplace l'ancien au lieu
+// d'empiler les versions, ce qui est le comportement attendu d'un profil.
+const ID_CV = (uid) => `${uid}_cv`;
+
+// Ecrit la fiche du document. Le CV passe par `setDoc` a l'identifiant
+// deterministe, les autres types gardent un identifiant automatique puisque
+// rien n'a besoin de les retrouver par leur chemin.
+function enregistrerDocument(uid, documentType, donnees) {
+  if (documentType === 'cv') {
+    const ref = doc(db, 'candidateDocuments', ID_CV(uid));
+    return setDoc(ref, donnees, { merge: true }).then(() => ref);
+  }
+  return addDoc(collection(db, 'candidateDocuments'), donnees);
+}
+
 async function uploadStorageDocument(file, documentType, candidateId = '') {
   const user = auth.currentUser;
   if (!user) throw new Error('Authentification requise.');
@@ -180,7 +202,7 @@ async function uploadStorageDocument(file, documentType, candidateId = '') {
     createdAt: serverTimestamp()
   };
 
-  const documentRef = await addDoc(collection(db, 'candidateDocuments'), document);
+  const documentRef = await enregistrerDocument(uid, document.documentType, document);
   await setDoc(doc(db, 'candidateProfiles', uid), { documentProvider: 'firebase-storage', updatedAt: serverTimestamp() }, { merge: true });
   return { id: documentRef.id, name: document.name, documentType: document.documentType };
 }
@@ -211,7 +233,7 @@ async function uploadCloudinaryDocument(file, documentType, candidateId = '') {
     createdAt: serverTimestamp()
   };
 
-  const documentRef = await addDoc(collection(db, 'candidateDocuments'), document);
+  const documentRef = await enregistrerDocument(uid, document.documentType, document);
   await setDoc(doc(db, 'candidateProfiles', uid), { documentProvider: 'cloudinary', updatedAt: serverTimestamp() }, { merge: true });
   return { id: documentRef.id, name: document.name, documentType: document.documentType };
 }
@@ -235,16 +257,18 @@ async function loadWorkspace(session) {
   const published = query(collection(db, 'missions'), where('status', '==', 'published'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
 
   if (session.role === 'candidate') {
-    const [missions, applications, profile, interviews] = await Promise.all([
+    const [missions, applications, profile, interviews, cv] = await Promise.all([
       getDocs(published),
       getDocs(query(collection(db, 'applications'), where('candidateId', '==', session.uid))),
       getDoc(doc(db, 'candidateProfiles', session.uid)),
-      getDocs(query(collection(db, 'interviews'), where('candidateId', '==', session.uid)))
+      getDocs(query(collection(db, 'interviews'), where('candidateId', '==', session.uid))),
+      getDoc(doc(db, 'candidateDocuments', ID_CV(session.uid)))
     ]);
     result.missions = rows(missions);
     result.applications = rows(applications);
     result.profile = profile.exists() ? profile.data() : {};
     result.interviews = rows(interviews);
+    result.hasCv = cv.exists();
     result.pagination.missions = pageInfo(missions);
   } else if (session.role === 'company') {
     const [missions, proposals, company] = await Promise.all([
@@ -394,8 +418,19 @@ async function withPrivateTerms(missions) {
   return missions.map((m, i) => (terms[i] ? { ...m, pay: terms[i].pay } : m));
 }
 
-function applyToMission(session, mission) {
+async function hasCvDocument(uid) {
+  const snap = await getDoc(doc(db, 'candidateDocuments', ID_CV(uid)));
+  return snap.exists();
+}
+
+async function applyToMission(session, mission) {
   if (session.role !== 'candidate') throw new Error('Action réservée aux candidats.');
+  // Les regles refusent deja la candidature sans CV, mais elles repondent
+  // « permission denied », ce qui n'explique rien. Le meme controle ici permet
+  // de dire ce qui manque et ou le corriger.
+  if (!(await hasCvDocument(session.uid))) {
+    throw new Error('Ajoutez votre CV dans Mon profil avant de postuler.');
+  }
   return addDoc(collection(db, 'applications'), {
     candidateId: session.uid,
     candidateName: session.displayName,
@@ -468,7 +503,7 @@ async function getDocumentsForCandidate(candidateId) {
 
 export {
   applyToMission, auth, countPublishedBySector, countPublishedMissions, createAccountProfile, createInterview, createMission, createProposal, db, firebaseApp,
-  connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, loadAcceptedProposals,
+  connectGoogleDrive, getDriveStatus, getDocumentsForCandidate, getSessionProfile, hasCvDocument, loadAcceptedProposals,
   loadMorePage, loadMorePublicMissions, loadPublicMissions, loadWorkspace, login, logout,
   onAuthStateChanged, register, resetPassword, respondToProposal, saveCandidateProfile, saveCompanyProfile,
   signInWithGoogle, submitContactMessage,
